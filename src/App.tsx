@@ -1,20 +1,20 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import type { Puzzle } from './engine';
 import { useGame, type GameReport } from './game/useGame';
 import { generateAsync } from './game/generateAsync';
 import {
   MODE_INFO,
   TIME_ATTACK_LEVELS,
-  buildPuzzle,
   decodeLevelCode,
-  encodeLevelCode,
   specForClassic,
   specForCustom,
   specForDaily,
   specForTimeAttack,
   specForZen,
+  unlockChallenge,
   type LevelSpec,
 } from './game/levels';
+import { buildUrl, specFromUrl } from './game/urlState';
 import {
   DEFAULT_META,
   DEFAULT_PROGRESS,
@@ -41,32 +41,41 @@ import { LevelSelect } from './components/LevelSelect';
 import { RecordsPanel } from './components/RecordsPanel';
 import { SettingsPanel } from './components/SettingsPanel';
 import { RulesPanel } from './components/RulesPanel';
+import { Home } from './components/Home';
+import { Icon } from './components/Icon';
 
-type Screen = 'play' | 'modes' | 'levels' | 'records' | 'settings' | 'rules';
+type Screen = 'home' | 'play' | 'modes' | 'levels' | 'records' | 'settings' | 'rules';
+
+interface ChallengeState {
+  level: number;
+  timeLimitMs: number;
+  mistakeLimit: number;
+  unlocked: boolean;
+}
 
 export default function App() {
   const [settings, setSettings] = useState<Settings>(() => loadSettings());
   const [progress, setProgress] = useState<Progress>(() => loadProgress());
   const [meta, setMeta] = useState<MetaState>(() => loadMeta());
   const [records, setRecords] = useState<Record<string, LevelRecord>>(() => loadRecords());
-  const [screen, setScreen] = useState<Screen>('play');
-  const [spec, setSpec] = useState<LevelSpec>(() => specForClassic(loadProgress().classicLevel));
-  const [puzzle, setPuzzle] = useState<Puzzle>(() => buildPuzzle(specForClassic(loadProgress().classicLevel)));
+  const [screen, setScreen] = useState<Screen>('home');
+  const [spec, setSpec] = useState<LevelSpec | null>(null);
+  const [puzzle, setPuzzle] = useState<Puzzle | null>(null);
   const [generating, setGenerating] = useState(false);
   const [lastReport, setLastReport] = useState<GameReport | null>(null);
+  const [challenge, setChallenge] = useState<ChallengeState | null>(null);
   const [taRunSeed, setTaRunSeed] = useState(() => Date.now() >>> 0);
   const [splits, setSplits] = useState<number[]>([]);
   const [taTotalMs, setTaTotalMs] = useState(0);
+  const [pendingChallengeLevel, setPendingChallengeLevel] = useState<number | null>(null);
   const genToken = useRef(0);
-  const pendingSpec = useRef<LevelSpec | null>(null);
 
-  // 持久化
   useEffect(() => saveSettings(settings), [settings]);
   useEffect(() => saveProgress(progress), [progress]);
   useEffect(() => saveMeta(meta), [meta]);
   useEffect(() => saveRecords(records), [records]);
 
-  // 主题
+  // 主题（跟随系统 / 浅色 / 深色）
   useEffect(() => {
     const root = document.documentElement;
     const apply = () => {
@@ -81,55 +90,81 @@ export default function App() {
     return () => mq?.removeEventListener?.('change', apply);
   }, [settings.theme]);
 
-  const loadSpec = useCallback((next: LevelSpec, opts: { keepTime?: boolean } = {}) => {
-    const token = ++genToken.current;
-    setSpec(next);
-    setGenerating(true);
-    setLastReport(null);
-    if (!opts.keepTime) {
-      setSplits([]);
-      setTaTotalMs(0);
+  const loadSpec = useCallback(
+    (next: LevelSpec, opts: { keepSplits?: boolean; challenge?: ChallengeState | null } = {}) => {
+      const token = ++genToken.current;
+      setSpec(next);
+      setScreen('play');
+      setGenerating(true);
+      setLastReport(null);
+      setChallenge(opts.challenge ?? null);
+      if (!opts.keepSplits) {
+        setSplits([]);
+        setTaTotalMs(0);
+      }
+      void generateAsync(next).then((p) => {
+        if (genToken.current !== token) return;
+        setPuzzle(p);
+        setGenerating(false);
+      });
+    },
+    [],
+  );
+
+  // 启动时读取 URL 参数：分享链接可以直接打开对应关卡
+  const bootstrapped = useRef(false);
+  useEffect(() => {
+    if (bootstrapped.current) return;
+    bootstrapped.current = true;
+    const parsed = specFromUrl(window.location.search);
+    if (!parsed) return;
+    const prog = loadProgress();
+    if (parsed.challenge && parsed.spec.level > prog.classicLevel) {
+      // 分享链接指向还没解锁的关卡：打开关卡列表并直接弹出解锁挑战
+      setPendingChallengeLevel(parsed.spec.level);
+      setScreen('levels');
+      return;
     }
-    void generateAsync(next).then((p) => {
-      if (genToken.current !== token) return;
-      setPuzzle(p);
-      setGenerating(false);
-    });
+    loadSpec(parsed.spec);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  const currentKey = recordIdFor(spec.mode, spec.level, spec.seed, puzzle.n);
-  const recordKey = spec.mode === 'classic' ? `classic:${spec.level}` : currentKey;
-  const record = records[recordKey];
+  // URL 跟随当前关卡，随时可以一键复制分享
+  useEffect(() => {
+    if (!spec || screen !== 'play') return;
+    window.history.replaceState(null, '', buildUrl(spec));
+  }, [spec, screen]);
+
+  const recordKey = spec && puzzle ? (spec.mode === 'classic' ? `classic:${spec.level}` : recordIdFor(spec.mode, spec.level, spec.seed, puzzle.n)) : '';
+  const record = recordKey ? records[recordKey] : undefined;
 
   const onFinish = useCallback(
     (report: GameReport) => {
+      if (!spec || !puzzle) return;
       setLastReport(report);
-
-      // 限时挑战：累计分关时间
       if (spec.mode === 'timeattack') {
-        const nextSplits = [...splits, report.timeMs];
-        setSplits(nextSplits);
+        setSplits((prev) => [...prev, report.timeMs]);
         setTaTotalMs((t) => t + report.timeMs);
       }
-
       const stars = starsFor(report.mistakes, report.hints);
-      const rec: LevelRecord = {
-        key: recordKey,
-        mode: spec.mode,
-        level: spec.level,
-        n: puzzle.n,
-        seed: spec.seed,
-        difficulty: spec.difficulty,
-        score: puzzle.meta.score,
-        cleared: true,
-        stars,
-        timeMs: report.timeMs,
-        mistakes: report.mistakes,
-        hints: report.hints,
-        attempts: 1,
-        updatedAt: Date.now(),
-      };
-      setRecords((prev) => mergeRecord(prev, rec));
+      setRecords((prev) =>
+        mergeRecord(prev, {
+          key: recordKey,
+          mode: spec.mode,
+          level: spec.level,
+          n: puzzle.n,
+          seed: spec.seed,
+          difficulty: spec.difficulty,
+          score: puzzle.meta.score,
+          cleared: true,
+          stars,
+          timeMs: report.timeMs,
+          mistakes: report.mistakes,
+          hints: report.hints,
+          attempts: 1,
+          updatedAt: Date.now(),
+        }),
+      );
       setMeta((prev) => {
         const next: MetaState = {
           ...prev,
@@ -146,26 +181,21 @@ export default function App() {
         }
         return next;
       });
-      // 经典模式推进解锁
-      if (spec.mode === 'classic' && spec.level >= progress.classicLevel) {
-        setProgress((p) => ({ ...p, classicLevel: p.classicLevel + 1 }));
+      if (spec.mode === 'classic') {
+        if (challenge && challenge.level === spec.level) {
+          setChallenge((c) => (c ? { ...c, unlocked: true } : c));
+          setProgress((p) => (spec.level >= p.classicLevel ? { ...p, classicLevel: spec.level + 1 } : p));
+        } else {
+          setProgress((p) => (spec.level >= p.classicLevel ? { ...p, classicLevel: p.classicLevel + 1 } : p));
+        }
       }
     },
-    [spec, splits, recordKey, puzzle.n, puzzle.meta.score, progress.classicLevel],
+    [spec, puzzle, recordKey, challenge],
   );
-
-  const api = useGame(puzzle, { strictMistakes: settings.strictMistakes, sound: settings.sound, onFinish });
-
-  // 开发期脚本钩子（正式构建不包含）
-  useEffect(() => {
-    if (import.meta.env.DEV) {
-      (window as unknown as Record<string, unknown>).__foxi = { puzzle, api, spec, solution: puzzle.solution };
-    }
-  });
 
   const startMode = (mode: GameMode) => {
     setProgress((p) => ({ ...p, mode }));
-    pendingSpec.current = null;
+    setChallenge(null);
     if (mode === 'classic') loadSpec(specForClassic(progress.classicLevel));
     else if (mode === 'daily') loadSpec(specForDaily());
     else if (mode === 'timeattack') {
@@ -174,75 +204,82 @@ export default function App() {
       loadSpec(specForTimeAttack(0, seed));
     } else if (mode === 'zen') loadSpec(specForZen(progress.customDifficulty, progress.customSize, Date.now()));
     else loadSpec(specForCustom(progress.customDifficulty, progress.customSize, (Date.now() >>> 0) % 0xffffff));
-    setScreen('play');
   };
 
   const nextLevel = () => {
+    if (!spec) return;
     if (spec.mode === 'classic') {
-      const next = Math.max(progress.classicLevel, spec.level + 1);
-      loadSpec(specForClassic(next));
-    } else if (spec.mode === 'timeattack') {
-      const idx = spec.level;
-      if (idx >= TIME_ATTACK_LEVELS) {
-        // 一轮结束：结算
-        const total = splits.reduce((a, b) => a + b, 0);
-        setMeta((prev) => {
-          const better = prev.bestTimeAttackMs === null || total < prev.bestTimeAttackMs;
-          return better ? { ...prev, bestTimeAttackMs: total, bestTimeAttackSplits: splits } : prev;
-        });
-        alert(`5 连闯完成！总用时 ${(total / 1000).toFixed(1)} 秒`);
-        setScreen('modes');
-      } else {
-        loadSpec(specForTimeAttack(idx, taRunSeed), { keepTime: true });
+      if (challenge) {
+        setChallenge(null);
+        setScreen('levels');
+        return;
       }
-    } else if (spec.mode === 'daily') {
-      setScreen('modes');
-    } else if (spec.mode === 'zen') {
-      loadSpec(specForZen(spec.difficulty, spec.size, Date.now()));
-    } else {
-      loadSpec(specForCustom(spec.difficulty, spec.size, (Date.now() >>> 0) % 0xffffff));
-    }
+      loadSpec(specForClassic(Math.max(progress.classicLevel, spec.level + 1)));
+    } else if (spec.mode === 'timeattack') {
+      if (spec.level >= TIME_ATTACK_LEVELS) {
+        const total = splits.reduce((a, b) => a + b, 0);
+        setMeta((prev) =>
+          prev.bestTimeAttackMs === null || total < prev.bestTimeAttackMs
+            ? { ...prev, bestTimeAttackMs: total, bestTimeAttackSplits: splits }
+            : prev,
+        );
+        setScreen('home');
+      } else {
+        loadSpec(specForTimeAttack(spec.level, taRunSeed), { keepSplits: true });
+      }
+    } else if (spec.mode === 'daily') setScreen('home');
+    else if (spec.mode === 'zen') loadSpec(specForZen(spec.difficulty, spec.size, Date.now()));
+    else loadSpec(specForCustom(spec.difficulty, spec.size, (Date.now() >>> 0) % 0xffffff));
   };
 
-  const isRecord = useMemo(() => {
-    if (!lastReport || !record) return false;
-    return lastReport.timeMs < record.timeMs && record.cleared;
-  }, [lastReport, record]);
-
+  const playing = screen === 'play' && spec !== null && puzzle !== null;
   const stars = lastReport ? starsFor(lastReport.mistakes, lastReport.hints) : 0;
-
-  const codeFor = (s: LevelSpec) => encodeLevelCode({ size: s.size, difficulty: s.difficulty, seed: s.seed });
+  const isRecord = !!(lastReport && record?.cleared && lastReport.timeMs < record.timeMs);
 
   return (
     <div className="app">
       <nav className="tabs">
-        <button className={screen === 'play' ? 'tab active' : 'tab'} onClick={() => setScreen('play')}>
-          {MODE_INFO[spec.mode].icon} {MODE_INFO[spec.mode].name}
+        <button className={screen === 'home' ? 'tab active' : 'tab'} onClick={() => setScreen('home')}>
+          <Icon name="home" /> 首页
         </button>
         <button className={screen === 'modes' ? 'tab active' : 'tab'} onClick={() => setScreen('modes')}>
-          模式
+          <Icon name="grid" /> 模式
         </button>
         <button className={screen === 'levels' ? 'tab active' : 'tab'} onClick={() => setScreen('levels')}>
-          关卡
+          <Icon name="trophy" /> 关卡
         </button>
         <button className={screen === 'records' ? 'tab active' : 'tab'} onClick={() => setScreen('records')}>
-          成绩
+          <Icon name="chart" /> 成绩
         </button>
         <button className={screen === 'settings' ? 'tab active' : 'tab'} onClick={() => setScreen('settings')}>
-          设置
+          <Icon name="gear" /> 设置
         </button>
         <button className={screen === 'rules' ? 'tab active' : 'tab'} onClick={() => setScreen('rules')}>
-          规则
+          <Icon name="info" /> 规则
         </button>
         <span className="brand">佛系消消消 · 纯净版</span>
       </nav>
 
-      {screen === 'play' && (
-        <PlayView
-          puzzle={puzzle}
-          api={api}
+      {screen === 'home' && (
+        <Home
+          progress={progress}
+          meta={meta}
+          dailyStars={meta.dailyDone[specForDaily().code ?? '']}
+          onContinue={() => startMode('classic')}
+          onMode={startMode}
+          onLevels={() => setScreen('levels')}
+          onRecords={() => setScreen('records')}
+          onSettings={() => setScreen('settings')}
+          onRules={() => setScreen('rules')}
+        />
+      )}
+
+      {playing && (
+        <GameScreen
+          key={`${spec!.mode}:${spec!.level}:${spec!.seed}:${challenge ? 'c' : 'n'}`}
+          spec={spec!}
+          puzzle={puzzle!}
           settings={settings}
-          spec={spec}
           generating={generating}
           stars={stars}
           isRecord={isRecord}
@@ -250,9 +287,11 @@ export default function App() {
           bestMs={record?.cleared ? record.timeMs : null}
           splits={splits}
           taTotalMs={taTotalMs}
+          challenge={challenge}
+          onFinish={onFinish}
           onNext={nextLevel}
-          onReplay={() => loadSpec(spec)}
-          onExit={() => setScreen('modes')}
+          onReplay={() => loadSpec(spec!, { challenge })}
+          onExit={() => setScreen(challenge ? 'levels' : 'home')}
           onSettings={(patch) => setSettings((s) => ({ ...s, ...patch }))}
           onZenChange={(difficulty, size) => {
             setProgress((p) => ({ ...p, customDifficulty: difficulty, customSize: size }));
@@ -278,25 +317,37 @@ export default function App() {
           </div>
           <div className="modegrid">
             {(Object.keys(MODE_INFO) as GameMode[]).map((m) => (
-              <button key={m} className={'modecard' + (spec.mode === m ? ' current' : '')} onClick={() => startMode(m)}>
+              <button key={m} className={'modecard' + (progress.mode === m ? ' current' : '')} onClick={() => startMode(m)}>
                 <div className="modetop">
-                  <span className="modeicon">{MODE_INFO[m].icon}</span>
+                  <span className="modeicon">
+                    <Icon
+                      name={
+                        m === 'classic'
+                          ? 'trophy'
+                          : m === 'daily'
+                            ? 'calendar'
+                            : m === 'timeattack'
+                              ? 'stopwatch'
+                              : m === 'zen'
+                                ? 'leaf'
+                                : 'sliders'
+                      }
+                      size="lg"
+                    />
+                  </span>
                   <b>{MODE_INFO[m].name}</b>
                   {m === 'classic' && <span className="pill soft">第 {progress.classicLevel} 关</span>}
                   {m === 'daily' && (
-                    <span className="pill soft">
-                      {meta.dailyDone[specForDaily().code ?? ''] ? '今日已完成' : '今日未完成'}
-                    </span>
+                    <span className="pill soft">{meta.dailyDone[specForDaily().code ?? ''] ? '今日已完成' : '今日未完成'}</span>
                   )}
                 </div>
                 <div className="modecarddesc">{MODE_INFO[m].desc}</div>
-                {m === 'timeattack' && meta.bestTimeAttackMs && (
+                {m === 'timeattack' && meta.bestTimeAttackMs !== null && (
                   <div className="modecarddesc">最好成绩 {(meta.bestTimeAttackMs / 1000).toFixed(1)} 秒</div>
                 )}
               </button>
             ))}
           </div>
-          <div className="footnote">经典闯关会一关关解锁；禅模式与自定义可以随时调难度和尺寸。</div>
         </div>
       )}
 
@@ -304,11 +355,14 @@ export default function App() {
         <LevelSelect
           unlocked={progress.classicLevel}
           records={records}
-          onPick={(level) => {
-            loadSpec(specForClassic(level));
-            setScreen('play');
+          initialPending={pendingChallengeLevel}
+          onPick={(level) => loadSpec(specForClassic(level))}
+          onChallenge={(level) => {
+            setPendingChallengeLevel(null);
+            const c = unlockChallenge(level);
+            loadSpec(specForClassic(level), { challenge: { level, ...c, unlocked: false } });
           }}
-          onBack={() => setScreen('play')}
+          onBack={() => setScreen('home')}
         />
       )}
 
@@ -316,28 +370,103 @@ export default function App() {
         <RecordsPanel
           records={records}
           meta={meta}
-          onBack={() => setScreen('play')}
+          onBack={() => setScreen('home')}
           onClear={() => {
             clearAll();
             setRecords({});
             setMeta(DEFAULT_META);
             setProgress(DEFAULT_PROGRESS);
-            setScreen('modes');
+            setScreen('home');
           }}
         />
       )}
       {screen === 'settings' && (
-        <SettingsPanel settings={settings} onChange={(patch) => setSettings((s) => ({ ...s, ...patch }))} onBack={() => setScreen('play')} />
+        <SettingsPanel settings={settings} onChange={(patch) => setSettings((s) => ({ ...s, ...patch }))} onBack={() => setScreen('home')} />
       )}
-      {screen === 'rules' && <RulesPanel onBack={() => setScreen('play')} />}
+      {screen === 'rules' && <RulesPanel onBack={() => setScreen('home')} />}
 
       <footer className="footer">
-        <span>
-          关卡码 <code className="mono">{codeFor(spec)}</code> · {puzzle.n}×{puzzle.n} · 设计难度 {puzzle.meta.score.toFixed(1)}（
-          {puzzle.meta.label}）
-        </span>
+        {spec && puzzle ? (
+          <span>
+            关卡码 <code className="mono">{buildUrl(spec).split('code=')[1]}</code> · {puzzle.n}×{puzzle.n} · 设计难度{' '}
+            {puzzle.meta.score.toFixed(1)}（{puzzle.meta.label}）
+          </span>
+        ) : (
+          <span>关卡由浏览器本地生成 · 不需要联网</span>
+        )}
         <span className="tip">无限畅玩 · 无体力无广告 · 提示不限次数</span>
       </footer>
     </div>
+  );
+}
+
+/**
+ * 游戏层：只有真正在玩的时候才挂载，
+ * 这样首页/面板不会带着计时和棋盘状态。
+ */
+function GameScreen(props: {
+  spec: LevelSpec;
+  puzzle: Puzzle;
+  settings: Settings;
+  generating: boolean;
+  stars: number;
+  isRecord: boolean;
+  streak: number;
+  bestMs: number | null;
+  splits: number[];
+  taTotalMs: number;
+  challenge: ChallengeState | null;
+  onFinish: (report: GameReport) => void;
+  onNext: () => void;
+  onReplay: () => void;
+  onExit: () => void;
+  onSettings: (patch: Partial<Settings>) => void;
+  onZenChange: (difficulty: number, size: number | null) => void;
+  onImportCode: (code: string) => void;
+}) {
+  const api = useGame(props.puzzle, {
+    strictMistakes: props.settings.strictMistakes,
+    sound: props.settings.sound,
+    timeLimitMs: props.challenge?.timeLimitMs,
+    mistakeLimit: props.challenge?.mistakeLimit,
+    onFinish: props.onFinish,
+  });
+
+  useEffect(() => {
+    if (import.meta.env.DEV) {
+      (window as unknown as Record<string, unknown>).__foxi = {
+        puzzle: props.puzzle,
+        api,
+        spec: props.spec,
+        challenge: props.challenge,
+        solution: props.puzzle.solution,
+      };
+    }
+  });
+
+  return (
+    <PlayView
+      puzzle={props.puzzle}
+      api={api}
+      settings={props.settings}
+      spec={props.spec}
+      generating={props.generating}
+      stars={props.stars}
+      isRecord={props.isRecord}
+      streak={props.streak}
+      bestMs={props.bestMs}
+      splits={props.splits}
+      taTotalMs={props.taTotalMs}
+      challenge={props.challenge}
+      challengedUnlocked={!!props.challenge?.unlocked}
+      onChallengeRetry={props.onReplay}
+      onChallengeExit={props.onExit}
+      onNext={props.onNext}
+      onReplay={props.onReplay}
+      onExit={props.onExit}
+      onSettings={props.onSettings}
+      onZenChange={props.onZenChange}
+      onImportCode={props.onImportCode}
+    />
   );
 }

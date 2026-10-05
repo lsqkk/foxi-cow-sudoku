@@ -14,6 +14,8 @@ import {
   specForZen,
 } from '../levels';
 import { DEFAULT_META, mergeRecord, starsFor, type LevelRecord } from '../storage';
+import { buildParams, specFromUrl } from '../urlState';
+import { unlockChallenge } from '../levels';
 
 const SHOW = process.env.SHOW_DIST === '1';
 
@@ -76,6 +78,35 @@ describe('关卡与模式', () => {
     }
     expect(decodeLevelCode('乱写的')).toBeNull();
     expect(decodeLevelCode('FOXI1-9-a-zzz!!')).toBeNull();
+  });
+
+  it('URL 参数能带着地图往返（分享链接）', () => {
+    const cases = [
+      specForClassic(37),
+      specForDaily(new Date('2026-10-05')),
+      specForTimeAttack(2, 987654),
+      specForZen(7.5, 11, 555),
+      specForCustom(9.2, 13, 424242),
+    ];
+    for (const spec of cases) {
+      const parsed = specFromUrl('?' + buildParams(spec));
+      expect(parsed).not.toBeNull();
+      expect(parsed!.spec.mode).toBe(spec.mode);
+      expect(parsed!.spec.seed).toBe(spec.seed >>> 0);
+      if (spec.mode === 'classic' || spec.mode === 'timeattack') expect(parsed!.spec.level).toBe(spec.level);
+      if (spec.size !== null) expect(parsed!.spec.size).toBe(spec.size);
+    }
+    expect(specFromUrl('?m=classic&lv=12')!.spec.level).toBe(12);
+    expect(specFromUrl('')!).toBeNull();
+  });
+
+  it('解锁挑战的限时与错误上限随难度递增', () => {
+    const l1 = unlockChallenge(1);
+    const l400 = unlockChallenge(400);
+    expect(l1.timeLimitMs).toBeGreaterThanOrEqual(60_000);
+    expect(l400.timeLimitMs).toBeLessThanOrEqual(600_000);
+    expect(l400.timeLimitMs).toBeGreaterThan(l1.timeLimitMs);
+    expect(l400.mistakeLimit).toBeGreaterThanOrEqual(l1.mistakeLimit);
   });
 
   it('星级与成绩合并规则正确', () => {

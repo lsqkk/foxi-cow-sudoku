@@ -71,6 +71,18 @@ export function specForCustom(difficulty: number, size: number | null, seed: num
   return { mode: 'custom', level: seed, difficulty, size, seed };
 }
 
+/**
+ * “从任意关开始”的解锁挑战：限时 + 错误次数上限。
+ * 通过了就把进度推到这个关卡（后面的关卡随之解锁）。
+ */
+export function unlockChallenge(level: number): { timeLimitMs: number; mistakeLimit: number } {
+  const difficulty = classicDifficulty(level);
+  const n = profileForScore(difficulty, undefined).n;
+  const seconds = Math.min(600, Math.max(60, Math.round(40 + n * difficulty * 2.2)));
+  const mistakeLimit = difficulty < 3.5 ? 1 : difficulty < 6.5 ? 2 : 3;
+  return { timeLimitMs: seconds * 1000, mistakeLimit };
+}
+
 /** 关卡码：把 尺寸 / 难度 / 种子 编码成可复制的一串 */
 export function encodeLevelCode(spec: Pick<LevelSpec, 'size' | 'difficulty' | 'seed'>): string {
   const size = spec.size ?? 0;
