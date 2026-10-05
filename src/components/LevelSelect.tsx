@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react';
+import { useMemo, useRef, useState } from 'react';
 import { classicDifficulty, unlockChallenge } from '../game/levels';
 import type { LevelRecord } from '../game/storage';
 import { Icon, Stars } from './Icon';
@@ -19,7 +19,13 @@ const PAGE = 60;
 export function LevelSelect({ unlocked, records, onPick, onChallenge, onBack, initialPending }: Props) {
   const [page, setPage] = useState(0);
   const [pending, setPending] = useState<number | null>(initialPending ?? null);
-  const pages = Math.max(1, Math.ceil((unlocked + 20) / PAGE));
+  const [jump, setJump] = useState('');
+  const touchStart = useRef<{ x: number; y: number } | null>(null);
+
+  // 允许一直往后翻（后面全是未解锁关卡，点进去就是“解锁挑战”），
+  // 至少给 6 页（360 关），所以没解锁也能左右翻页看后面的关卡。
+  const MAX_LEVELS = 3000;
+  const pages = Math.max(6, Math.ceil(Math.max(unlocked + 20, PAGE) / PAGE));
 
   const rows = useMemo(() => {
     const out: { level: number; rec?: LevelRecord }[] = [];
@@ -34,6 +40,18 @@ export function LevelSelect({ unlocked, records, onPick, onChallenge, onBack, in
     () => Object.values(records).filter((r) => r.mode === 'classic').reduce((a, r) => a + r.stars, 0),
     [records],
   );
+
+  const goPage = (next: number) => setPage(Math.max(0, Math.min(pages - 1, next)));
+
+  const doJump = () => {
+    const n = Number(jump);
+    if (!Number.isFinite(n) || n < 1) return;
+    const target = Math.min(MAX_LEVELS, Math.floor(n));
+    setPage(Math.floor((target - 1) / PAGE));
+    setJump('');
+    if (target <= unlocked) onPick(target);
+    else setPending(target);
+  };
 
   return (
     <div className="panel">
@@ -52,9 +70,46 @@ export function LevelSelect({ unlocked, records, onPick, onChallenge, onBack, in
         </button>
       </div>
       <p className="footnote">
-        已解锁的关卡可以直接玩；想跳到后面的关卡，需要通过一次「解锁挑战」：在规定时间内解出，并且错误不超过限定次数。
+        已解锁的关卡可以直接玩（点击即开始）。后面的关卡可以直接往后翻页 / 输入关号跳过去，
+        点击会发起「解锁挑战」：在规定时间内解出，并且错误不超过限定次数，通过后就解锁了。
+        <br />
+        手机上也可以在这一页左右滑动翻页。
       </p>
-      <div className="levelgrid">
+      <div className="jumprow">
+        <label>
+          跳到第
+          <input
+            className="jumpinput"
+            inputMode="numeric"
+            placeholder="关号"
+            value={jump}
+            onChange={(e) => setJump(e.target.value.replace(/[^0-9]/g, ''))}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter') doJump();
+            }}
+          />
+          关
+        </label>
+        <button onClick={doJump} disabled={!jump}>
+          前往
+        </button>
+      </div>
+      <div
+        className="levelgrid"
+        onTouchStart={(e) => {
+          const t = e.touches[0];
+          touchStart.current = { x: t.clientX, y: t.clientY };
+        }}
+        onTouchEnd={(e) => {
+          const start = touchStart.current;
+          touchStart.current = null;
+          if (!start) return;
+          const t = e.changedTouches[0];
+          const dx = t.clientX - start.x;
+          const dy = t.clientY - start.y;
+          if (Math.abs(dx) > 60 && Math.abs(dx) > Math.abs(dy) * 1.5) goPage(page + (dx < 0 ? 1 : -1));
+        }}
+      >
         {rows.map(({ level, rec }) => {
           const locked = level > unlocked;
           return (
@@ -72,13 +127,13 @@ export function LevelSelect({ unlocked, records, onPick, onChallenge, onBack, in
         })}
       </div>
       <div className="pager">
-        <button onClick={() => setPage((p) => Math.max(0, p - 1))} disabled={page === 0}>
+        <button onClick={() => goPage(page - 1)} disabled={page === 0}>
           <Icon name="prev" /> 上一页
         </button>
         <span>
           {page + 1} / {pages} 页
         </span>
-        <button onClick={() => setPage((p) => Math.min(pages - 1, p + 1))} disabled={page >= pages - 1}>
+        <button onClick={() => goPage(page + 1)} disabled={page >= pages - 1}>
           下一页 <Icon name="next" />
         </button>
       </div>
@@ -87,24 +142,45 @@ export function LevelSelect({ unlocked, records, onPick, onChallenge, onBack, in
         <div className="modal-backdrop" onClick={() => setPending(null)}>
           <div className="modal" onClick={(e) => e.stopPropagation()}>
             <h3>
-              <Icon name="lock" /> 解锁第 {pending} 关
+              <Icon name={pending > unlocked ? 'lock' : 'play'} /> {pending > unlocked ? `解锁第 ${pending} 关` : `开始第 ${pending} 关`}
             </h3>
-            <div className="sub">
-              跳关需要通过一次挑战：在限定时间内解出这一关，并且错误不超过限定次数。通过后，第 {pending}{' '}
-              关及之前的所有关卡都会解锁。
-            </div>
+            {pending > unlocked ? (
+              <div className="sub">
+                跳关需要通过一次挑战：在限定时间内解出这一关，并且错误不超过限定次数。通过后，第 {pending}{' '}
+                关及之前的所有关卡都会解锁。
+              </div>
+            ) : (
+              <div className="sub">
+                这一关已经解锁，可以直接开始。
+                {records[`classic:${pending}`]?.cleared
+                  ? ` 你之前的最好成绩：${(records[`classic:${pending}`].timeMs / 1000).toFixed(0)} 秒、${records[`classic:${pending}`].stars} 星。`
+                  : ''}
+              </div>
+            )}
             <div className="challengerules">
               <div>
-                <Icon name="clock" /> 限时 <b>{Math.round(unlockChallenge(pending).timeLimitMs / 1000)} 秒</b>
+                <Icon name="clock" /> {pending > unlocked ? '限时' : '往期最好'}{' '}
+                <b>
+                  {pending > unlocked
+                    ? `${Math.round(unlockChallenge(pending).timeLimitMs / 1000)} 秒`
+                    : records[`classic:${pending}`]?.cleared
+                      ? `${(records[`classic:${pending}`].timeMs / 1000).toFixed(0)} 秒`
+                      : '—'}
+                </b>
               </div>
               <div>
-                <Icon name="bullseye" /> 错误上限 <b>{unlockChallenge(pending).mistakeLimit} 次</b>
+                <Icon name="bullseye" /> {pending > unlocked ? '错误上限' : '历史错误'}{' '}
+                <b>{pending > unlocked ? `${unlockChallenge(pending).mistakeLimit} 次` : (records[`classic:${pending}`]?.attempts ?? '—')}</b>
               </div>
               <div>
                 <Icon name="progress" /> 预计难度 <b>{classicDifficulty(pending).toFixed(1)}</b>
               </div>
             </div>
-            <div className="footnote">计时从你第一次点击棋盘开始；提示可以用，但错误次数用尽或超时即挑战失败。</div>
+            <div className="footnote">
+              {pending > unlocked
+                ? '计时从你第一次点击棋盘开始；提示可以用，但错误次数用尽或超时即挑战失败。'
+                : '计时从你第一次点击棋盘开始。'}
+            </div>
             <div className="modalbtns">
               <button onClick={() => setPending(null)}>再想想</button>
               <button
@@ -112,10 +188,11 @@ export function LevelSelect({ unlocked, records, onPick, onChallenge, onBack, in
                 onClick={() => {
                   const level = pending;
                   setPending(null);
-                  onChallenge(level);
+                  if (level > unlocked) onChallenge(level);
+                  else onPick(level);
                 }}
               >
-                开始挑战
+                {pending > unlocked ? '开始挑战' : '开始游戏'}
               </button>
             </div>
           </div>

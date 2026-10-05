@@ -72,6 +72,8 @@ export interface MetaState {
   bestTimeAttackMs: number | null;
   /** 限时挑战最好成绩的分段（每关用时） */
   bestTimeAttackSplits?: number[];
+  /** 限时挑战最近几次完整成绩（最新在前，最多 5 条） */
+  timeAttackHistory?: { totalMs: number; splits: number[]; at: number }[];
   dailyDone: Record<string, number>;
 }
 
@@ -83,6 +85,7 @@ export const DEFAULT_META: MetaState = {
   noMistakeClears: 0,
   totalTimeMs: 0,
   bestTimeAttackMs: null,
+  timeAttackHistory: [],
   dailyDone: {},
 };
 

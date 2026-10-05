@@ -1033,6 +1033,51 @@ button.big {
   font-size: 15px;
 }
 
+.jumprow {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 8px 0 4px;
+  font-size: 13px;
+  color: var(--muted);
+  flex-wrap: wrap;
+}
+.jumprow label {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.jumpinput {
+  width: 90px;
+  font: inherit;
+  padding: 7px 10px;
+  border-radius: 10px;
+  border: 1px solid var(--line);
+  background: var(--card);
+  color: inherit;
+}
+.talist {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin: 12px 0;
+}
+.tarow {
+  display: flex;
+  justify-content: space-between;
+  font-size: 14px;
+  padding: 6px 10px;
+  border-radius: 10px;
+  background: var(--surface-2);
+}
+.tarow.total {
+  background: color-mix(in srgb, var(--primary) 12%, var(--card));
+  font-size: 16px;
+}
+.tarow.total b {
+  color: var(--primary-dark);
+}
+
 @media (max-width: 760px) {
   .homemain {
     grid-template-columns: 1fr;

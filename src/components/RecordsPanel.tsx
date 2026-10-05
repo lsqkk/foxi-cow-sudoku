@@ -1,6 +1,6 @@
 import { useMemo } from 'react';
 import { formatTime } from '../game/useGame';
-import { MODE_INFO } from '../game/levels';
+import { MODE_INFO, TIME_ATTACK_LEVELS } from '../game/levels';
 import type { GameMode, LevelRecord, MetaState } from '../game/storage';
 
 interface Props {
@@ -57,6 +57,33 @@ export function RecordsPanel({ records, meta, onBack, onClear }: Props) {
           </div>
         </div>
       </div>
+      {(meta.timeAttackHistory?.length ?? 0) > 0 && (
+        <>
+          <h3 className="subhead">{TIME_ATTACK_LEVELS} 连闯记录</h3>
+          <div className="tablewrap">
+            <table className="datatable">
+              <thead>
+                <tr>
+                  <th>时间</th>
+                  <th>总用时</th>
+                  <th>分段</th>
+                </tr>
+              </thead>
+              <tbody>
+                {meta.timeAttackHistory!.map((run, i) => (
+                  <tr key={run.at}>
+                    <td className="muted">{new Date(run.at).toLocaleString()}</td>
+                    <td>
+                      {formatTime(run.totalMs)} {i === 0 && meta.bestTimeAttackMs === run.totalMs ? '（最佳）' : ''}
+                    </td>
+                    <td className="muted">{run.splits.map((t) => formatTime(t)).join(' / ')}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </>
+      )}
       <h3 className="subhead">各模式通关数</h3>
       <div className="calibstat">
         {(Object.keys(MODE_INFO) as GameMode[]).map((m) => (

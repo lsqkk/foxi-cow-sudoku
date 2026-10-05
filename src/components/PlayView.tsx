@@ -297,7 +297,7 @@ export function PlayView(props: Props) {
           <Icon name={api.paused ? 'resume' : 'pause'} /> {api.paused ? '继续' : '暂停'}
         </button>
         <button onClick={props.onReplay}>
-          <Icon name="restart" /> 重玩
+          <Icon name="restart" /> {spec.mode === 'timeattack' ? '放弃本轮' : '重玩'}
         </button>
         <button onClick={copy}>
           <Icon name={linkCopied ? 'check' : 'share'} /> {linkCopied ? '已复制' : '分享'}
@@ -347,10 +347,40 @@ export function PlayView(props: Props) {
 
       {spec.mode === 'custom' && (
         <div className="difficultybar">
+          <div className="sliders">
+            <label>
+              难度 <b>{spec.difficulty.toFixed(1)}</b>
+              <input
+                type="range"
+                min={1}
+                max={10}
+                step={0.5}
+                value={spec.difficulty}
+                onChange={(e) => props.onZenChange(Number(e.target.value), spec.size)}
+              />
+            </label>
+            <label>
+              棋盘
+              <select
+                value={spec.size ?? 'auto'}
+                onChange={(e) => props.onZenChange(spec.difficulty, e.target.value === 'auto' ? null : Number(e.target.value))}
+              >
+                <option value="auto">自动</option>
+                {[5, 6, 7, 8, 9, 10, 11, 12, 13].map((v) => (
+                  <option key={v} value={v}>
+                    {v}×{v}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <button className="primary" onClick={props.onNext} disabled={generating}>
+              <Icon name="restart" /> 按这个设置出一关
+            </button>
+          </div>
           <div className="shareline">
             本关代码 <code>{code}</code>
             <button className="ghost" onClick={copy}>
-              {copied ? '已复制 ✓' : '复制'}
+              <Icon name={copied ? 'check' : 'copy'} /> {copied ? '已复制' : '复制关卡码'}
             </button>
           </div>
           <div className="sliders">
@@ -361,7 +391,7 @@ export function PlayView(props: Props) {
               onChange={(e) => setCodeInput(e.target.value)}
             />
             <button onClick={() => props.onImportCode(codeInput)} disabled={!codeInput.trim()}>
-              导入
+              <Icon name="link" /> 导入关卡码
             </button>
           </div>
         </div>

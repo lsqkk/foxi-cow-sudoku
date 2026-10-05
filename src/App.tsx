@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import type { Puzzle } from './engine';
-import { useGame, type GameReport } from './game/useGame';
+import { formatTime, useGame, type GameReport } from './game/useGame';
 import { generateAsync } from './game/generateAsync';
 import {
   MODE_INFO,
@@ -15,6 +15,7 @@ import {
   type LevelSpec,
 } from './game/levels';
 import { buildUrl, specFromUrl } from './game/urlState';
+import { encodeLevelCode } from './game/levels';
 import {
   DEFAULT_META,
   DEFAULT_PROGRESS,
@@ -67,8 +68,11 @@ export default function App() {
   const [taRunSeed, setTaRunSeed] = useState(() => Date.now() >>> 0);
   const [splits, setSplits] = useState<number[]>([]);
   const [taTotalMs, setTaTotalMs] = useState(0);
+  const [taSummary, setTaSummary] = useState<{ totalMs: number; splits: number[]; isBest: boolean } | null>(null);
   const [pendingChallengeLevel, setPendingChallengeLevel] = useState<number | null>(null);
   const genToken = useRef(0);
+  /** 限时挑战的累计分段：用 ref 同步累加，避免 state 时序问题 */
+  const splitsRef = useRef<number[]>([]);
 
   useEffect(() => saveSettings(settings), [settings]);
   useEffect(() => saveProgress(progress), [progress]);
@@ -101,6 +105,7 @@ export default function App() {
       if (!opts.keepSplits) {
         setSplits([]);
         setTaTotalMs(0);
+        if (next.mode === 'timeattack') splitsRef.current = [];
       }
       void generateAsync(next).then((p) => {
         if (genToken.current !== token) return;
@@ -143,8 +148,26 @@ export default function App() {
       if (!spec || !puzzle) return;
       setLastReport(report);
       if (spec.mode === 'timeattack') {
-        setSplits((prev) => [...prev, report.timeMs]);
-        setTaTotalMs((t) => t + report.timeMs);
+        splitsRef.current = [...splitsRef.current, report.timeMs];
+        setSplits(splitsRef.current);
+        setTaTotalMs(splitsRef.current.reduce((a, b) => a + b, 0));
+        // 第 5 关一完成就地结算并存档（不等用户点按钮，避免“没保存”）
+        if (spec.level >= TIME_ATTACK_LEVELS) {
+          const done = splitsRef.current;
+          const total = done.reduce((a, b) => a + b, 0);
+          const isBest = meta.bestTimeAttackMs === null || total < meta.bestTimeAttackMs;
+          setMeta((prev) => {
+            const history = [{ totalMs: total, splits: done, at: Date.now() }, ...(prev.timeAttackHistory ?? [])].slice(0, 5);
+            return {
+              ...prev,
+              timeAttackHistory: history,
+              bestTimeAttackMs: prev.bestTimeAttackMs === null || total < prev.bestTimeAttackMs ? total : prev.bestTimeAttackMs,
+              bestTimeAttackSplits:
+                prev.bestTimeAttackMs === null || total < prev.bestTimeAttackMs ? done : prev.bestTimeAttackSplits,
+            };
+          });
+          setTaSummary({ totalMs: total, splits: done, isBest });
+        }
       }
       const stars = starsFor(report.mistakes, report.hints);
       setRecords((prev) =>
@@ -190,7 +213,7 @@ export default function App() {
         }
       }
     },
-    [spec, puzzle, recordKey, challenge],
+    [spec, puzzle, recordKey, challenge, meta.bestTimeAttackMs],
   );
 
   const startMode = (mode: GameMode) => {
@@ -201,6 +224,8 @@ export default function App() {
     else if (mode === 'timeattack') {
       const seed = Date.now() >>> 0;
       setTaRunSeed(seed);
+      splitsRef.current = [];
+      setTaSummary(null);
       loadSpec(specForTimeAttack(0, seed));
     } else if (mode === 'zen') loadSpec(specForZen(progress.customDifficulty, progress.customSize, Date.now()));
     else loadSpec(specForCustom(progress.customDifficulty, progress.customSize, (Date.now() >>> 0) % 0xffffff));
@@ -217,12 +242,8 @@ export default function App() {
       loadSpec(specForClassic(Math.max(progress.classicLevel, spec.level + 1)));
     } else if (spec.mode === 'timeattack') {
       if (spec.level >= TIME_ATTACK_LEVELS) {
-        const total = splits.reduce((a, b) => a + b, 0);
-        setMeta((prev) =>
-          prev.bestTimeAttackMs === null || total < prev.bestTimeAttackMs
-            ? { ...prev, bestTimeAttackMs: total, bestTimeAttackSplits: splits }
-            : prev,
-        );
+        // 已经结算过了，直接回首页（成绩在 onFinish 里就存好了）
+        setTaSummary(null);
         setScreen('home');
       } else {
         loadSpec(specForTimeAttack(spec.level, taRunSeed), { keepSplits: true });
@@ -290,8 +311,28 @@ export default function App() {
           challenge={challenge}
           onFinish={onFinish}
           onNext={nextLevel}
-          onReplay={() => loadSpec(spec!, { challenge })}
-          onExit={() => setScreen(challenge ? 'levels' : 'home')}
+          onReplay={() => {
+            if (spec!.mode === 'timeattack') {
+              if (splitsRef.current.length > 0 && !confirm('放弃本轮限时挑战？本轮成绩不会记录。')) return;
+              splitsRef.current = [];
+              setSplits([]);
+              setTaTotalMs(0);
+              const seed = Date.now() >>> 0;
+              setTaRunSeed(seed);
+              loadSpec(specForTimeAttack(0, seed));
+              return;
+            }
+            loadSpec(spec!, { challenge });
+          }}
+          onExit={() => {
+            if (spec!.mode === 'timeattack' && splitsRef.current.length > 0) {
+              if (!confirm('离开将放弃本轮限时挑战，确定吗？')) return;
+              splitsRef.current = [];
+              setSplits([]);
+              setTaTotalMs(0);
+            }
+            setScreen(challenge ? 'levels' : 'home');
+          }}
           onSettings={(patch) => setSettings((s) => ({ ...s, ...patch }))}
           onZenChange={(difficulty, size) => {
             setProgress((p) => ({ ...p, customDifficulty: difficulty, customSize: size }));
@@ -385,10 +426,59 @@ export default function App() {
       )}
       {screen === 'rules' && <RulesPanel onBack={() => setScreen('home')} />}
 
+      {taSummary && (
+        <div className="modal-backdrop" onClick={() => setTaSummary(null)}>
+          <div className="modal" onClick={(e) => e.stopPropagation()}>
+            <h3>
+              <Icon name="stopwatch" /> {TIME_ATTACK_LEVELS} 连闯完成
+            </h3>
+            <div className="sub">
+              成绩已自动保存。{taSummary.isBest ? '这是你的新纪录！' : '继续加油，可以再挑战一轮。'}
+            </div>
+            <div className="talist">
+              {taSummary.splits.map((t, i) => (
+                <div key={i} className="tarow">
+                  <span>
+                    第 {i + 1} 关
+                  </span>
+                  <b>{formatTime(t)}</b>
+                </div>
+              ))}
+              <div className="tarow total">
+                <span>总用时</span>
+                <b>{formatTime(taSummary.totalMs)}</b>
+              </div>
+            </div>
+            {meta.bestTimeAttackMs !== null && (
+              <div className="footnote">
+                历史最佳 {formatTime(meta.bestTimeAttackMs)}
+                {meta.bestTimeAttackSplits?.length ? `（${meta.bestTimeAttackSplits.map((t) => formatTime(t)).join(' / ')}）` : ''}
+              </div>
+            )}
+            <div className="modalbtns">
+              <button onClick={() => setScreen('records')}>
+                <Icon name="chart" /> 查看成绩
+              </button>
+              <button onClick={() => setTaSummary(null)}>关闭</button>
+              <button
+                className="primary"
+                onClick={() => {
+                  setTaSummary(null);
+                  startMode('timeattack');
+                }}
+              >
+                <Icon name="restart" /> 再挑战一轮
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       <footer className="footer">
         {spec && puzzle ? (
           <span>
-            关卡码 <code className="mono">{buildUrl(spec).split('code=')[1]}</code> · {puzzle.n}×{puzzle.n} · 设计难度{' '}
+            关卡码 <code className="mono">{encodeLevelCode({ size: spec.size, difficulty: spec.difficulty, seed: spec.seed })}</code> ·{' '}
+            {puzzle.n}×{puzzle.n} · 设计难度{' '}
             {puzzle.meta.score.toFixed(1)}（{puzzle.meta.label}）
           </span>
         ) : (
