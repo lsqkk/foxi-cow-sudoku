@@ -23,9 +23,9 @@ export function LevelSelect({ unlocked, records, onPick, onChallenge, onBack, in
   const touchStart = useRef<{ x: number; y: number } | null>(null);
 
   // 允许一直往后翻（后面全是未解锁关卡，点进去就是“解锁挑战”），
-  // 至少给 6 页（360 关），所以没解锁也能左右翻页看后面的关卡。
+  // 所以没解锁也能左右翻页看后面的关卡。
   const MAX_LEVELS = 3000;
-  const pages = Math.max(6, Math.ceil(Math.max(unlocked + 20, PAGE) / PAGE));
+  const pages = Math.max(6, Math.ceil(Math.max(unlocked + 20, MAX_LEVELS) / PAGE));
 
   const rows = useMemo(() => {
     const out: { level: number; rec?: LevelRecord }[] = [];
