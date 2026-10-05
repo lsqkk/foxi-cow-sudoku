@@ -1,0 +1,28 @@
+{
+  "name": "foxi-cow-pure",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "description": "佛系消消消（数独 x 扫雷）纯净复刻版：无限畅玩、难度可调、关卡无限生成，内置真实难度标定工具",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc -b && vite build",
+    "preview": "vite preview --port 4173",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "bench": "vitest run src/engine/__tests__/distribution.test.ts --reporter=basic"
+  },
+  "dependencies": {
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1"
+  },
+  "devDependencies": {
+    "@types/react": "^18.3.12",
+    "@types/react-dom": "^18.3.1",
+    "@types/node": "^22.9.0",
+    "@vitejs/plugin-react": "^4.3.3",
+    "typescript": "^5.6.3",
+    "vite": "^5.4.10",
+    "vitest": "^2.1.4"
+  }
+}

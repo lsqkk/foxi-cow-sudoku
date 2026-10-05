@@ -1,0 +1,23 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+    <meta name="theme-color" content="#f4f5f7" />
+    <title>佛系消消消 · 纯净版</title>
+  </head>
+  <body>
+    <div id="root"></div>
+    <script>
+      // 开发期错误提示：任何脚本错误都会显示在页面上，方便排查
+      window.addEventListener('error', function (e) {
+        var el = document.createElement('pre');
+        el.id = 'runtime-error';
+        el.style.cssText = 'position:fixed;inset:0;z-index:9999;background:#fff;color:#c0392b;padding:16px;overflow:auto;font-size:12px;white-space:pre-wrap';
+        el.textContent = '运行错误：\n' + (e.error && e.error.stack ? e.error.stack : e.message);
+        document.body.appendChild(el);
+      });
+    </script>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>
