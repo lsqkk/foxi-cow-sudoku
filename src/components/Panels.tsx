@@ -1,6 +1,6 @@
 import { useMemo, useState } from 'react';
 import { TECHNIQUE_LABEL, type TechniqueId } from '../engine';
-import { CALIBRATION_PACK, RATING_TAGS, type PackLevel } from '../game/calibration';
+import { CALIBRATION_PACK, RATING_TAGS } from '../game/calibration';
 import { exportCSV, exportJSON, type SessionRecord } from '../game/storage';
 
 // ---------------------------------------------------------------------------
@@ -532,8 +532,4 @@ export function RulesPanel({ onBack }: { onBack: () => void }) {
       </p>
     </div>
   );
-}
-
-export function packLevelInfo(p: PackLevel): string {
-  return `${p.n}×${p.n} · 目标难度 ${p.difficulty}`;
 }
