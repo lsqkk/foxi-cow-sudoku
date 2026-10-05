@@ -564,6 +564,10 @@ export interface LadderResult {
   steps: number;
   placeCount: number;
   eliminateCount: number;
+  /** 组合推理步数（第 3 层及以上） */
+  hardSteps: number;
+  /** 平均剩余候选数（阅读负担） */
+  avgCandidates: number;
 }
 
 export interface LadderOptions {
@@ -581,6 +585,9 @@ export function runLadder(puzzle: { n: number; colors: number[][] }, opts: Ladde
   let placeCount = 0;
   let eliminateCount = 0;
   let highestTier = 0;
+  let hardSteps = 0;
+  let candidateSum = 0;
+  let candidateSamples = 0;
 
   propagateBasic(s);
 
@@ -588,16 +595,32 @@ export function runLadder(puzzle: { n: number; colors: number[][] }, opts: Ladde
     if (hasContradiction(s)) break;
     const d = nextLadderStep(s);
     if (!d) break;
+    let live = 0;
+    for (let i = 0; i < s.cand.length; i++) if (s.cand[i]) live++;
+    candidateSum += live;
+    candidateSamples++;
     applyDeduction(s, d);
     techniqueCounts[d.technique] = (techniqueCounts[d.technique] ?? 0) + 1;
     highestTier = Math.max(highestTier, d.tier);
+    if (d.tier >= 3) hardSteps++;
     steps++;
     if (d.kind === 'place') placeCount++;
     else eliminateCount += d.targets.length;
     if (opts.collectDeductions) deductions.push(d);
   }
 
-  return { solved: s.placed === s.n, state: s, deductions, techniqueCounts, highestTier, steps, placeCount, eliminateCount };
+  return {
+    solved: s.placed === s.n,
+    state: s,
+    deductions,
+    techniqueCounts,
+    highestTier,
+    steps,
+    placeCount,
+    eliminateCount,
+    hardSteps,
+    avgCandidates: candidateSamples > 0 ? candidateSum / candidateSamples : 0,
+  };
 }
 
 // ---------------------------------------------------------------------------
@@ -828,6 +851,8 @@ export function analyzePuzzle(
     highestTier: ladder.highestTier,
     steps: ladder.steps,
     techniqueCounts: ladder.techniqueCounts,
+    hardSteps: ladder.hardSteps,
+    avgCandidates: ladder.avgCandidates,
     guessDepth: 0,
     searchNodes: 0,
     unique: ladder.solved,
@@ -859,6 +884,27 @@ export function analyzePuzzle(
   metrics.unique = false;
   metrics.unproven = search.budgetHit;
   return metrics;
+}
+
+/** 游戏内提示：结合玩家当前标记给出下一步（含兜底） */
+/**
+ * 数一数“完整解法”里到底要用几次排除法（反证）。
+ * 只在需要严格区分最高难度档时才调用（比较贵）。
+ */
+export function countRefutations(
+  puzzle: { n: number; colors: number[][]; solution?: number[] },
+  opts: { refuteNodeLimit?: number; maxSteps?: number } = {},
+): { refutationSteps: number; searchHintSteps: number; solved: boolean; steps: number } {
+  const res = solveCompletely(puzzle, {
+    refuteNodeLimit: opts.refuteNodeLimit ?? 6000,
+    maxSteps: opts.maxSteps ?? 400,
+  });
+  return {
+    refutationSteps: res.refutationSteps,
+    searchHintSteps: res.searchHintSteps,
+    solved: res.solved,
+    steps: res.steps,
+  };
 }
 
 /** 游戏内提示：结合玩家当前标记给出下一步（含兜底） */

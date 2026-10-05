@@ -14,10 +14,10 @@ import type { Puzzle } from '../types';
 import { generatePuzzle } from '../generator';
 import { profileForScore } from '../difficulty';
 
-function makeRawPuzzle(n: number, seed: number, compactness = 0.7, segments = 0.3, crosses = 0.15, small = 0.7) {
+function makeRawPuzzle(n: number, seed: number, compactness = 0.7, segments = 0.3, crosses = 0.15, small = 0.7, giant = 0.5) {
   const rng = mulberry32(seed);
   const solution = randomSolution(n, rng);
-  const colors = growRegions(n, solution, { small, segments, crosses, compactness }, rng);
+  const colors = growRegions(n, solution, { small, giant, segments, crosses, compactness }, rng);
   return { n, colors, solution };
 }
 

@@ -20,9 +20,9 @@ function isRealSolution(n: number, colors: number[][], placement: number[]): str
 describe('搜索出的“其他解”是否真的合法', () => {
   it('检查 countSolutions 返回的解', () => {
     const styles: ShapeStyle[] = [
-      { small: 0.6, segments: 0.5, crosses: 0.25, compactness: 0.9 },
-      { small: 0.6, segments: 0.32, crosses: 0.15, compactness: 0.65 },
-      { small: 0.6, segments: 0, crosses: 0, compactness: 0.5 },
+      { small: 0.6, giant: 0.5, segments: 0.5, crosses: 0.25, compactness: 0.9 },
+      { small: 0.6, giant: 0.5, segments: 0.32, crosses: 0.15, compactness: 0.65 },
+      { small: 0.6, giant: 0.5, segments: 0, crosses: 0, compactness: 0.5 },
     ];
     let bad = 0;
     let ambiguous = 0;

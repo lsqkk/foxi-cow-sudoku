@@ -69,7 +69,7 @@ export function randomSolution(n: number, rng: () => number): number[] {
   return cols;
 }
 
-export const DEFAULT_STYLE: ShapeStyle = { small: 0.6, segments: 0.3, crosses: 0.15, compactness: 0.7 };
+export const DEFAULT_STYLE: ShapeStyle = { small: 0.6, giant: 0.5, segments: 0.3, crosses: 0.15, compactness: 0.7 };
 
 function segmentCells(n: number, r: number, c: number, maxLen: number, rng: () => number): number[] | null {
   // 长度 2..n-1：铺满整行会失去线索作用，所以最多留一个缺口
@@ -100,10 +100,9 @@ function crossCells(n: number, r: number, c: number, rng: () => number): number[
  * 目标尺寸：每个颜色至少 1 格，其余格子按重尾分布分配。
  * small 越大，越容易出现 1-3 格的小颜色 —— 这是“约束变强 / 关卡变简单且唯一”的关键。
  */
-export function drawTargetSizes(n: number, small: number, rng: () => number): number[] {
+export function drawTargetSizes(n: number, small: number, giant: number, rng: () => number): number[] {
   const total = n * n;
   const sizes = new Array<number>(n).fill(1);
-  const maxSize = Math.max(4, Math.round(total * 0.3));
 
   // 1) 一部分颜色做成很小的区域（1-3 格）：最直接的线索
   const tinyCount = Math.round(clamp01(small) * n);
@@ -114,23 +113,26 @@ export function drawTargetSizes(n: number, small: number, rng: () => number): nu
     left -= extra;
   }
 
-  // 2) 其余格子分给剩下的颜色（带随机偏差，避免完全等大）
+  // 2) 其余格子按轮盘赌分给剩下的颜色；其中一个颜色按 giant 加权，形成“巨型色块”
+  //    （巨型色块需要长距离推理，是提升难度体感的主要手段之一）
   const rest = Array.from({ length: n - tinyCount }, (_, i) => tinyCount + i);
-  const weights = rest.map(() => 0.6 + rng() * 0.8);
-  const wsum = weights.reduce((a, b) => a + b, 0);
-  for (let i = 0; i < rest.length; i++) {
-    const share = Math.round((left * weights[i]) / wsum);
-    sizes[rest[i]] += Math.min(share, maxSize - sizes[rest[i]]);
-  }
-  // 3) 因上限剩下的格子，补给当前最小的颜色（会自然形成一小批偏大的区域）
-  let remain = total - sizes.reduce((a, b) => a + b, 0);
-  let guard = 0;
-  while (remain > 0 && guard++ < total * 4) {
-    let k = 0;
-    for (let i = 1; i < n; i++) if (sizes[i] < sizes[k]) k = i;
-    if (sizes[k] >= maxSize) break;
-    sizes[k]++;
-    remain--;
+  if (rest.length > 0 && left > 0) {
+    const weights = rest.map(() => 0.5 + rng());
+    const giantIdx = randInt(rng, rest.length);
+    weights[giantIdx] *= 1 + 9 * clamp01(giant);
+    const wsum = weights.reduce((a, b) => a + b, 0);
+    for (let t = 0; t < left; t++) {
+      let r = rng() * wsum;
+      let idx = rest[rest.length - 1];
+      for (let i = 0; i < rest.length; i++) {
+        r -= weights[i];
+        if (r <= 0) {
+          idx = rest[i];
+          break;
+        }
+      }
+      sizes[idx]++;
+    }
   }
   return sizes;
 }
@@ -152,7 +154,7 @@ export function growRegions(n: number, solution: number[], style: ShapeStyle, rn
   const nbr4 = buildNeighbors4(n);
   const frozen = new Set<number>();
   const regionCells: number[][] = Array.from({ length: n }, () => []);
-  const target = drawTargetSizes(n, style.small, rng);
+  const target = drawTargetSizes(n, style.small, style.giant ?? 0.5, rng);
 
   // 每个颜色的“牛格”是它的种子，必须先预留出来，避免被别的颜色抢先占用
   const seedOf = (k: number) => idx(n, k, solution[k]);
@@ -184,7 +186,7 @@ export function growRegions(n: number, solution: number[], style: ShapeStyle, rn
       if (allFree(line, k)) {
         take(k, line);
         // 尾巴长度 ≈ 目标尺寸 - 整线
-        let tail = Math.min(target[k] - n, Math.max(0, n * 2));
+        let tail = Math.max(0, target[k] - n);
         while (tail > 0) {
           const cands: number[] = [];
           for (const i of regionCells[k]) for (const j of nbr4[i]) if (usable(j, k)) cands.push(j);
@@ -197,7 +199,8 @@ export function growRegions(n: number, solution: number[], style: ShapeStyle, rn
         continue;
       }
     }
-    if (segLeft > 0 && target[k] >= 3) {
+    // 线段只适合中等大小的颜色；目标很大的颜色留给“整线 + 长尾巴”去做巨型色块
+    if (segLeft > 0 && target[k] >= 3 && target[k] <= n) {
       const seg = segmentCells(n, r, c, target[k], rng);
       if (seg && allFree(seg, k)) {
         take(k, seg);
@@ -230,6 +233,38 @@ export function growRegions(n: number, solution: number[], style: ShapeStyle, rn
 
   let assigned = owner.reduce((acc, v) => acc + (v === -1 ? 0 : 1), 0);
   const compactness = Math.max(0, Math.min(1, style.compactness));
+
+  // 先把“巨型色块”喂饱：按目标从大到小贪心生长，保证真的长出大块颜色
+  // （否则大色块容易被其它区域围死，巨型占比上不去，难度也就上不去）
+  const frontierOf = (k: number) => {
+    const out: number[] = [];
+    for (const i of regionCells[k]) for (const j of nbr4[i]) if (owner[j] === -1) out.push(j);
+    return out;
+  };
+  for (const k of bySize) {
+    if (frozen.has(k)) continue;
+    let guard = 0;
+    while (regionCells[k].length < target[k] && guard++ < total * 2) {
+      const cands = frontierOf(k);
+      if (cands.length === 0) break;
+      let best = cands[0];
+      let bestScore = -1;
+      for (const j of cands) {
+        let score = 0;
+        for (const t of nbr4[j]) if (owner[t] === k) score++;
+        if (score > bestScore) {
+          bestScore = score;
+          best = j;
+        }
+      }
+      owner[best] = k;
+      regionCells[k].push(best);
+      assigned++;
+      for (let t = 0; t < n; t++) frontier[t].delete(best);
+      refresh(k);
+    }
+  }
+
   while (assigned < total) {
     const all = growable();
     if (all.length === 0) break;

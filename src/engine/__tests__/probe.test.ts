@@ -16,9 +16,9 @@ function gridString(colors: number[][]): string {
 describe('生成探针', () => {
   it('打印唯一性修复的过程', () => {
     for (const [n, style] of [
-      [6, { small: 0.6, segments: 0.5, crosses: 0.25, compactness: 0.9 }],
-      [8, { small: 0.6, segments: 0.42, crosses: 0.18, compactness: 0.8 }],
-      [10, { small: 0.6, segments: 0.32, crosses: 0.15, compactness: 0.65 }],
+      [6, { small: 0.6, giant: 0.5, segments: 0.5, crosses: 0.25, compactness: 0.9 }],
+      [8, { small: 0.6, giant: 0.5, segments: 0.42, crosses: 0.18, compactness: 0.8 }],
+      [10, { small: 0.6, giant: 0.5, segments: 0.32, crosses: 0.15, compactness: 0.65 }],
     ] as [number, ShapeStyle][]) {
       for (let seed = 1; seed <= 6; seed++) {
         const rng = mulberry32(seed * 7919 + n * 31);
@@ -33,7 +33,7 @@ describe('生成探针', () => {
 
   it('打印一关的推理过程，看看卡在哪里', () => {
     const n = 6;
-    const style: ShapeStyle = { small: 0.6, segments: 0.5, crosses: 0.25, compactness: 0.9 };
+    const style: ShapeStyle = { small: 0.6, giant: 0.5, segments: 0.5, crosses: 0.25, compactness: 0.9 };
     const rng = mulberry32(20250101);
     const sol = randomSolution(n, rng);
     const colors = growRegions(n, sol, style, rng);
@@ -68,10 +68,10 @@ describe('生成探针', () => {
 
   it('找出颜色划分的失败案例', () => {
     const styles: ShapeStyle[] = [
-      { small: 0.6, segments: 0.5, crosses: 0.25, compactness: 0.9 },
-      { small: 0.6, segments: 0.32, crosses: 0.15, compactness: 0.65 },
-      { small: 0.6, segments: 0.15, crosses: 0.08, compactness: 0.35 },
-      { small: 0.6, segments: 0, crosses: 0, compactness: 0.2 },
+      { small: 0.6, giant: 0.5, segments: 0.5, crosses: 0.25, compactness: 0.9 },
+      { small: 0.6, giant: 0.5, segments: 0.32, crosses: 0.15, compactness: 0.65 },
+      { small: 0.6, giant: 0.5, segments: 0.15, crosses: 0.08, compactness: 0.35 },
+      { small: 0.6, giant: 0.5, segments: 0, crosses: 0, compactness: 0.2 },
     ];
     let failures = 0;
     for (let n = 5; n <= 11 && failures < 3; n++) {
@@ -98,11 +98,11 @@ describe('生成探针', () => {
 
   it('唯一率与逻辑推进统计', () => {
     const styles: [string, ShapeStyle][] = [
-      ['入门型', { small: 0.6, segments: 0.5, crosses: 0.25, compactness: 0.9 }],
-      ['简单型', { small: 0.6, segments: 0.42, crosses: 0.18, compactness: 0.8 }],
-      ['中等型', { small: 0.6, segments: 0.32, crosses: 0.15, compactness: 0.65 }],
-      ['困难型', { small: 0.6, segments: 0.21, crosses: 0.1, compactness: 0.47 }],
-      ['大师型', { small: 0.6, segments: 0.08, crosses: 0.045, compactness: 0.22 }],
+      ['入门型', { small: 0.6, giant: 0.5, segments: 0.5, crosses: 0.25, compactness: 0.9 }],
+      ['简单型', { small: 0.6, giant: 0.5, segments: 0.42, crosses: 0.18, compactness: 0.8 }],
+      ['中等型', { small: 0.6, giant: 0.5, segments: 0.32, crosses: 0.15, compactness: 0.65 }],
+      ['困难型', { small: 0.6, giant: 0.5, segments: 0.21, crosses: 0.1, compactness: 0.47 }],
+      ['大师型', { small: 0.6, giant: 0.5, segments: 0.08, crosses: 0.045, compactness: 0.22 }],
     ];
     for (const n of [6, 8, 10, 12]) {
       const parts: string[] = [];

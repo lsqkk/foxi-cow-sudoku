@@ -20,7 +20,7 @@ describe('调参：小颜色比例 vs 唯一率/难度', () => {
         for (let seed = 1; seed <= samples; seed++) {
           const rng = mulberry32(seed * 7919 + n * 31 + Math.round(small * 100));
           const solution = randomSolution(n, rng);
-          const colors = growRegions(n, solution, { small, segments: 0.25, crosses: 0.1, compactness: 0.5 }, rng);
+          const colors = growRegions(n, solution, { small, giant: 0.5, segments: 0.25, crosses: 0.1, compactness: 0.5 }, rng);
           if (!validateColorAssignment(n, colors, solution)) continue;
           const t0 = Date.now();
           const rep = repairToUnique(n, solution, colors, rng, { nodeLimit: 80_000, maxRepairs: 20 });

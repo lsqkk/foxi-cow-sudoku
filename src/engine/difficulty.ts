@@ -111,6 +111,12 @@ export function extractFeatures(n: number, colors: number[][], metrics: SolveMet
   let lineConfined = 0;
   for (let k = 0; k < n; k++) if (rowsOfColor[k].size === 1 || colsOfColor[k].size === 1) lineConfined++;
 
+  const cellsTotal = n * n;
+  let tinyCells = 0;
+  for (let k = 0; k < n; k++) if (sizes[k] <= 3) tinyCells += sizes[k];
+  const giantShare = Math.max(...sizes) / cellsTotal;
+  const tinyShare = tinyCells / cellsTotal;
+
   let tierCost = 0;
   for (const [id, count] of Object.entries(metrics.techniqueCounts)) {
     tierCost += (TECHNIQUE_COST[id as TechniqueId] ?? 0) * (count ?? 0);
@@ -132,6 +138,11 @@ export function extractFeatures(n: number, colors: number[][], metrics: SolveMet
     logicProgress: metrics.logicProgress,
     lineConfinedColors: lineConfined / n,
     monoLineRatio: monoLines / (2 * n),
+    hardSteps: metrics.hardSteps,
+    hardPerCow: metrics.hardSteps / n,
+    tinyShare,
+    giantShare,
+    avgCandidates: metrics.avgCandidates,
   };
 }
 
@@ -143,25 +154,39 @@ export function extractFeatures(n: number, colors: number[][], metrics: SolveMet
  * - 棋盘大小只做 ±10% 的轻微修正：10×10 也可以很简单，12/13 也可能只是中等。
  */
 export function scorePuzzle(features: DifficultyFeatures, metrics: SolveMetrics): number {
-  const sizeFactor = 1 + 0.02 * (features.n - 8); // n=5 -> 0.94, n=13 -> 1.10
-  const windingFactor = 1 + 0.35 * features.winding;
-  const perCowCost = features.tierCost / features.n;
-  const relief = 1 - 0.12 * features.lineConfinedColors; // 有明确入手点 -> 更好读
-  const base = perCowCost * sizeFactor * windingFactor * relief;
-  // 简单逻辑越早卡住，越依赖“排除法/反证”，关卡就越难
-  const deficit = clamp(1 - metrics.logicProgress, 0, 1);
-  const refutationPenalty = metrics.needsRefutation ? 1.4 + 4.6 * deficit : 0;
-  const searchPenalty = 0.45 * Math.min(metrics.guessDepth, 4);
-  // 把实测的分布（约 1.3~6.5）拉伸到 1~10，让滑杆真的能拉开差距
-  return clamp(1 + (base + refutationPenalty + searchPenalty) * 1.42, 1, 10);
+  const sizeFactor = 1 + 0.02 * (features.n - 8);
+  const H = designHardness(features, metrics);
+  // 标定：让“最规整的入门关”落在 ~2 分，“能做出来的最难关”落在 ~9.5 分
+  const score = 0.9 + 18.5 * H * sizeFactor;
+  return clamp(score, 1, 10);
+}
+
+/**
+ * 设计难度（0~1）：只由“地图设计 + 解题过程”决定，与棋盘大小无关。
+ * 加分项 = 需要动脑的地方；减分项 = 白送信息的地方。
+ */
+export function designHardness(features: DifficultyFeatures, metrics: SolveMetrics): number {
+  const norm = (x: number, a: number, b: number) => clamp((x - a) / (b - a), 0, 1);
+  const H =
+    0.3 * norm(features.hardPerCow, 0, 0.5) +
+    0.22 * norm(features.giantShare, 0.2, 0.6) +
+    0.16 * norm(features.winding, 0.1, 0.9) +
+    0.18 * norm(features.avgCandidates / features.n, 0.7, 1.8) +
+    (metrics.needsRefutation ? 0.22 + 0.07 * Math.min(metrics.refutationSteps, 4) : 0) -
+    0.3 * norm(features.tinyShare, 0, 0.25) -
+    0.18 * norm(features.lineConfinedColors, 0, 0.6) -
+    0.12 * norm(features.monoLineRatio, 0, 0.3);
+
+  return clamp(H, 0, 1);
 }
 
 export function difficultyLabel(score: number): string {
-  if (score < 3.2) return '入门';
-  if (score < 4.8) return '简单';
-  if (score < 6.6) return '中等';
-  if (score < 8.4) return '困难';
-  return '大师';
+  if (score < 3) return '入门';
+  if (score < 4.5) return '简单';
+  if (score < 6.2) return '中等';
+  if (score < 8) return '困难';
+  if (score < 9.1) return '大师';
+  return '地狱';
 }
 
 export interface GenerationProfile {
@@ -174,25 +199,27 @@ interface LadderRow {
   score: number;
   n: number;
   small: number;
+  giant: number;
   segments: number;
   crosses: number;
   compactness: number;
   minTier: number;
+  minHard: number;
   refute?: boolean;
 }
 
 /** 难度刻度：分数 -> 生成参数（尺寸只是默认值，可被玩家单独指定） */
 const LADDER: LadderRow[] = [
-  { score: 1, n: 5, small: 0.85, segments: 0.35, crosses: 0.2, compactness: 0.9, minTier: 0 },
-  { score: 2, n: 6, small: 0.8, segments: 0.33, crosses: 0.18, compactness: 0.85, minTier: 1 },
-  { score: 3, n: 7, small: 0.72, segments: 0.3, crosses: 0.16, compactness: 0.78, minTier: 2 },
-  { score: 4, n: 8, small: 0.64, segments: 0.28, crosses: 0.14, compactness: 0.7, minTier: 2 },
-  { score: 5, n: 9, small: 0.56, segments: 0.26, crosses: 0.13, compactness: 0.62, minTier: 2 },
-  { score: 6, n: 10, small: 0.5, segments: 0.24, crosses: 0.12, compactness: 0.55, minTier: 3 },
-  { score: 7, n: 10, small: 0.44, segments: 0.2, crosses: 0.1, compactness: 0.47, minTier: 3 },
-  { score: 8, n: 11, small: 0.4, segments: 0.16, crosses: 0.08, compactness: 0.4, minTier: 3 },
-  { score: 9, n: 12, small: 0.36, segments: 0.12, crosses: 0.06, compactness: 0.32, minTier: 3 },
-  { score: 10, n: 13, small: 0.32, segments: 0.1, crosses: 0.05, compactness: 0.26, minTier: 3 },
+  { score: 1, n: 5, small: 0.85, giant: 0.2, segments: 0.35, crosses: 0.2, compactness: 0.9, minTier: 0, minHard: 0 },
+  { score: 2, n: 6, small: 0.8, giant: 0.25, segments: 0.33, crosses: 0.18, compactness: 0.85, minTier: 1, minHard: 0 },
+  { score: 3, n: 7, small: 0.72, giant: 0.3, segments: 0.3, crosses: 0.16, compactness: 0.78, minTier: 2, minHard: 0 },
+  { score: 4, n: 8, small: 0.64, giant: 0.4, segments: 0.28, crosses: 0.14, compactness: 0.7, minTier: 2, minHard: 1 },
+  { score: 5, n: 9, small: 0.56, giant: 0.5, segments: 0.26, crosses: 0.13, compactness: 0.62, minTier: 2, minHard: 1 },
+  { score: 6, n: 10, small: 0.5, giant: 0.55, segments: 0.18, crosses: 0.08, compactness: 0.5, minTier: 3, minHard: 2 },
+  { score: 7, n: 10, small: 0.46, giant: 0.62, segments: 0.06, crosses: 0.02, compactness: 0.42, minTier: 3, minHard: 3 },
+  { score: 8, n: 11, small: 0.42, giant: 0.68, segments: 0, crosses: 0, compactness: 0.34, minTier: 3, minHard: 4 },
+  { score: 9, n: 12, small: 0.38, giant: 0.72, segments: 0, crosses: 0, compactness: 0.28, minTier: 3, minHard: 5 },
+  { score: 10, n: 13, small: 0.36, giant: 0.78, segments: 0, crosses: 0, compactness: 0.22, minTier: 3, minHard: 5 },
 ];
 
 export function profileForScore(score: number, sizeOverride?: number): GenerationProfile {
@@ -209,15 +236,18 @@ export function profileForScore(score: number, sizeOverride?: number): Generatio
   const t = hi.score === lo.score ? 0 : (s - lo.score) / (hi.score - lo.score);
   const lerp = (a: number, b: number) => a + (b - a) * t;
   const minTier = Math.round(lerp(lo.minTier, hi.minTier));
+  const minHard = Math.round(lerp(lo.minHard, hi.minHard));
   const n = sizeOverride ?? Math.round(lerp(lo.n, hi.n));
-  // 实测：棋盘越大，唯一解越依赖“小颜色”。低于这个下限时几乎全是多解，
-  // 生成器只能不断重试/退化，所以这里按尺寸给一个下限（easy 高、hard 低）。
-  const minSmall = clamp(0.42 + Math.max(0, n - 8) * 0.045, 0.42, 0.68);
+  const giant = lerp(lo.giant, hi.giant);
+  // 实测：唯一解既依赖“小颜色”，也依赖“巨型色块”（两者都能提供强约束）。
+  // giant 越高，允许的小颜色越少 —— 这正是把最高难度做硬的关键。
+  const minSmall = clamp(0.42 + Math.max(0, n - 8) * 0.035 - 0.15 * giant, 0.32, 0.7);
   const small = Math.max(minSmall, lerp(lo.small, hi.small));
   return {
     n,
     style: {
       small,
+      giant,
       segments: lerp(lo.segments, hi.segments),
       crosses: lerp(lo.crosses, hi.crosses),
       compactness: lerp(lo.compactness, hi.compactness),
@@ -225,6 +255,9 @@ export function profileForScore(score: number, sizeOverride?: number): Generatio
     target: {
       score: s,
       minTier: minTier > 0 ? minTier : undefined,
+      minHardSteps: minHard > 0 ? minHard : undefined,
+      // 高难度档不允许“悄悄降级”成简单关卡：给一个硬性最低分
+      minScore: s >= 7 ? s - 0.8 : undefined,
       requireLogic: s < 9,
     },
   };
@@ -247,7 +280,7 @@ export const PRESETS: Preset[] = [
     desc: '6×6，大量“单色线段”线索，基本只需唯一候选与整行同色',
     n: 6,
     score: 2,
-    style: { small: 0.8, segments: 0.33, crosses: 0.18, compactness: 0.85 },
+    style: { small: 0.8, giant: 0.25, segments: 0.33, crosses: 0.18, compactness: 0.85 },
   },
   {
     id: 'easy',
@@ -255,7 +288,7 @@ export const PRESETS: Preset[] = [
     desc: '8×8，色块规整，颜色被限制在一行/列这类线索很多',
     n: 8,
     score: 3.4,
-    style: { small: 0.7, segments: 0.29, crosses: 0.15, compactness: 0.75 },
+    style: { small: 0.7, giant: 0.32, segments: 0.29, crosses: 0.15, compactness: 0.75 },
   },
   {
     id: 'normal',
@@ -263,7 +296,7 @@ export const PRESETS: Preset[] = [
     desc: '10×10，色块开始弯曲，需要包含关系等组合推理',
     n: 10,
     score: 5,
-    style: { small: 0.56, segments: 0.26, crosses: 0.13, compactness: 0.62 },
+    style: { small: 0.56, giant: 0.5, segments: 0.26, crosses: 0.13, compactness: 0.62 },
   },
   {
     id: 'hard',
@@ -271,7 +304,7 @@ export const PRESETS: Preset[] = [
     desc: '10×10，缠绕色块，多步组合推理，入手点较少',
     n: 10,
     score: 6.8,
-    style: { small: 0.45, segments: 0.2, crosses: 0.1, compactness: 0.47 },
+    style: { small: 0.46, giant: 0.7, segments: 0.2, crosses: 0.1, compactness: 0.47 },
   },
   {
     id: 'expert',
@@ -279,15 +312,23 @@ export const PRESETS: Preset[] = [
     desc: '12×12，需要邻域覆盖或一步反证',
     n: 12,
     score: 8.2,
-    style: { small: 0.38, segments: 0.14, crosses: 0.07, compactness: 0.35 },
+    style: { small: 0.4, giant: 0.82, segments: 0.14, crosses: 0.07, compactness: 0.35 },
   },
   {
     id: 'master',
     name: '大师',
-    desc: '13×13，强缠绕，通常必须动用排除法/反证',
+    desc: '13×13，强缠绕 + 巨型色块，多步组合推理',
     n: 13,
-    score: 9.3,
-    style: { small: 0.33, segments: 0.1, crosses: 0.05, compactness: 0.26 },
+    score: 9,
+    style: { small: 0.37, giant: 0.72, segments: 0, crosses: 0, compactness: 0.28 },
+  },
+  {
+    id: 'hell',
+    name: '地狱',
+    desc: '13×13，必须动用排除法（反证）才能推进',
+    n: 13,
+    score: 9.6,
+    style: { small: 0.36, giant: 0.75, segments: 0, crosses: 0, compactness: 0.24 },
   },
 ];
 

@@ -75,7 +75,7 @@ describe('生成器', () => {
 
   it('修复成功率：小颜色越多，越容易修成唯一解', () => {
     const rate = (n: number, small: number) => {
-      const style = { small, segments: 0.25, crosses: 0.1, compactness: 0.7 };
+      const style = { small, giant: 0.5, segments: 0.25, crosses: 0.1, compactness: 0.7 };
       let ok = 0;
       const total = 20;
       for (let seed = 1; seed <= total; seed++) {

@@ -63,7 +63,7 @@ export interface GameReport {
  */
 export function useGame(
   puzzle: Puzzle,
-  opts: { strictMistakes: boolean; onFinish?: (report: GameReport) => void },
+  opts: { strictMistakes: boolean; sound?: boolean; onFinish?: (report: GameReport) => void },
 ): GameApi {
   const n = puzzle.n;
   const [marks, setMarks] = useState<Mark[]>(() => new Array(n * n).fill(0) as Mark[]);
@@ -169,8 +169,9 @@ export function useGame(
       marksRef.current[cell] = value;
       applyChanges([change]);
       setHint(null);
+      if (value === 1) beep('x', opts.sound ?? false);
     },
-    [applyChanges],
+    [applyChanges, opts.sound],
   );
 
   const endStroke = useCallback(() => {
@@ -209,6 +210,7 @@ export function useGame(
     setFinished(true);
     finishedRef.current = true;
     setPaused(true);
+    beep('win', opts.sound ?? false);
     opts.onFinish?.({
       timeMs: accumulated.current,
       mistakes: mistakesRef.current,
@@ -257,6 +259,7 @@ export function useGame(
       if (!correct && opts.strictMistakes) {
         setMistakes((m) => m + 1);
         setWrongCells([cell]);
+        beep('error', opts.sound ?? false);
         window.setTimeout(() => setWrongCells([]), 700);
         // 放错的牛会被自动拿掉（不扣血、不打断，只记一次错误）
         if (marksRef.current[cell] !== 2) {
@@ -272,6 +275,7 @@ export function useGame(
         return;
       }
       if (!correct && !opts.strictMistakes) setMistakes((m) => m + 1);
+      beep('place', opts.sound ?? false);
       beginStroke();
       paint(cell, 2);
       endStroke();
@@ -283,7 +287,7 @@ export function useGame(
         }, 260);
       }
     },
-    [n, puzzle.solution, opts.strictMistakes, beginStroke, paint, endStroke, checkWin, finishNow],
+    [n, puzzle.solution, opts.strictMistakes, opts.sound, beginStroke, paint, endStroke, checkWin, finishNow],
   );
 
   const undo = useCallback(() => {
@@ -382,4 +386,38 @@ export function formatTime(ms: number): string {
   const m = Math.floor(total / 60);
   const s = total % 60;
   return `${m}:${s.toString().padStart(2, '0')}`;
+}
+
+let audioCtx: AudioContext | null = null;
+
+/** 极简音效（不引入任何音频资源） */
+function beep(kind: 'place' | 'x' | 'error' | 'win', enabled: boolean): void {
+  if (!enabled) return;
+  try {
+    const Ctor = window.AudioContext ?? (window as unknown as { webkitAudioContext?: typeof AudioContext }).webkitAudioContext;
+    if (!Ctor) return;
+    audioCtx = audioCtx ?? new Ctor();
+    const ctx = audioCtx;
+    if (ctx.state === 'suspended') void ctx.resume();
+    const osc = ctx.createOscillator();
+    const gain = ctx.createGain();
+    const now = ctx.currentTime;
+    const table: Record<typeof kind, [number, number]> = {
+      place: [660, 0.09],
+      x: [420, 0.05],
+      error: [200, 0.14],
+      win: [880, 0.22],
+    };
+    const [freq, dur] = table[kind];
+    osc.type = kind === 'error' ? 'square' : 'sine';
+    osc.frequency.value = freq;
+    gain.gain.setValueAtTime(0.0001, now);
+    gain.gain.exponentialRampToValueAtTime(0.05, now + 0.01);
+    gain.gain.exponentialRampToValueAtTime(0.0001, now + dur);
+    osc.connect(gain).connect(ctx.destination);
+    osc.start(now);
+    osc.stop(now + dur + 0.02);
+  } catch {
+    /* 静默失败 */
+  }
 }

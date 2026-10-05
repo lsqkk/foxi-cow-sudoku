@@ -8,7 +8,7 @@ import {
 import { buildNeighbors4, colOf, idx, rowOf } from './board';
 import { difficultyLabel, extractFeatures, profileForScore, scorePuzzle } from './difficulty';
 import { hashString, mulberry32 } from './rng';
-import { analyzePuzzle, countSolutions, runLadder } from './solver';
+import { analyzePuzzle, countRefutations, countSolutions, runLadder } from './solver';
 import type { GenerateOptions, Puzzle, PuzzleMeta, PuzzleTarget, ShapeStyle } from './types';
 
 /** 该颜色是否“被限制在一行/一列内”（强线索） */
@@ -213,6 +213,15 @@ function targetPenalty(meta: PuzzleMeta, target: PuzzleTarget | undefined): numb
   }
   if (target.requireLogic && !meta.metrics.solvableByLogic) penalty += 2.5;
   if (target.requireRefutation && !meta.metrics.needsRefutation) penalty += 2.5;
+  if (target.minHardSteps !== undefined && meta.metrics.hardSteps < target.minHardSteps) {
+    penalty += 1.6 * (target.minHardSteps - meta.metrics.hardSteps);
+  }
+  if (target.minRefutationSteps !== undefined && meta.metrics.refutationSteps < target.minRefutationSteps) {
+    penalty += 3 * (target.minRefutationSteps - meta.metrics.refutationSteps);
+  }
+  if (target.minScore !== undefined && meta.score < target.minScore) {
+    penalty += 2.5 * (target.minScore - meta.score);
+  }
   return penalty;
 }
 
@@ -220,6 +229,9 @@ function constraintsMet(meta: PuzzleMeta, target: PuzzleTarget | undefined): boo
   if (!target) return true;
   if (target.requireLogic && !meta.metrics.solvableByLogic) return false;
   if (target.requireRefutation && !meta.metrics.needsRefutation) return false;
+  if (target.minHardSteps !== undefined && meta.metrics.hardSteps < target.minHardSteps) return false;
+  if (target.minRefutationSteps !== undefined && meta.metrics.refutationSteps < target.minRefutationSteps) return false;
+  if (target.minScore !== undefined && meta.score < target.minScore) return false;
   if (target.minTier !== undefined && meta.metrics.highestTier < target.minTier) return false;
   if (target.maxTier !== undefined && meta.metrics.highestTier > target.maxTier) return false;
   return true;
@@ -236,6 +248,16 @@ function defaultAttempts(n: number): number {
   if (n <= 8) return 70;
   if (n <= 10) return 50;
   return 18;
+}
+
+/** 高难度需要更多尝试次数（“真难”的关卡在随机分区里是少数） */
+function attemptsFor(opts: GenerateOptions): number {
+  let attempts = opts.maxAttempts ?? defaultAttempts(opts.n);
+  const t = opts.target;
+  if (t?.minScore !== undefined) attempts = Math.round(attempts * 1.8);
+  if (t?.minHardSteps !== undefined) attempts = Math.round(attempts * 1.4);
+  if (t?.minRefutationSteps !== undefined) attempts = Math.round(attempts * 1.5);
+  return Math.min(240, attempts);
 }
 
 /**
@@ -261,6 +283,13 @@ function attemptBatch(opts: GenerateOptions, attempts: number, bestSoFar: Attemp
     const colors = repaired.colors;
     const metrics = analyzePuzzle({ n, colors, solution }, { nodeLimit });
     if (!metrics.unique) continue; // 只接受唯一解的关卡
+    // 只有最高难度档才需要精确统计“反证次数”（这一步比较贵）
+    if (opts.target?.minRefutationSteps !== undefined) {
+      const ref = countRefutations({ n, colors, solution }, { refuteNodeLimit: 6000, maxSteps: 400 });
+      metrics.refutationSteps = ref.refutationSteps;
+      metrics.needsRefutation = ref.refutationSteps > 0 || metrics.needsRefutation;
+      if (ref.refutationSteps < (opts.target.minRefutationSteps ?? 0)) continue;
+    }
 
     const features = extractFeatures(n, colors, metrics);
     const score = scorePuzzle(features, metrics);
@@ -292,7 +321,7 @@ function attemptBatch(opts: GenerateOptions, attempts: number, bestSoFar: Attemp
  */
 export function generatePuzzle(opts: GenerateOptions): Puzzle {
   const started = Date.now();
-  const attempts = opts.maxAttempts ?? defaultAttempts(opts.n);
+  const attempts = attemptsFor(opts);
   let best = attemptBatch(opts, attempts, null);
 
   // 已经有“足够接近目标”的候选时就别再折腾了（极端高难度常常无法完全满足约束，
@@ -306,6 +335,7 @@ export function generatePuzzle(opts: GenerateOptions): Puzzle {
     // 最后兜底：让形状更“规整”（线段/整线更多，更容易唯一）
     const tighter: ShapeStyle = {
       small: Math.min(1, opts.style.small + 0.15),
+      giant: Math.max(0.2, opts.style.giant - 0.3),
       segments: Math.min(1, opts.style.segments + 0.18),
       crosses: Math.min(1, opts.style.crosses + 0.12),
       compactness: Math.min(1, opts.style.compactness + 0.25),
@@ -318,7 +348,7 @@ export function generatePuzzle(opts: GenerateOptions): Puzzle {
   }
   if (!best) {
     // 再兜底：大量小颜色（约束最强，几乎总能得到唯一解），只求可玩
-    const tinyStyle: ShapeStyle = { small: 0.95, segments: 0.5, crosses: 0.3, compactness: 0.9 };
+    const tinyStyle: ShapeStyle = { small: 0.95, giant: 0.3, segments: 0.5, crosses: 0.3, compactness: 0.9 };
     best = attemptBatch(
       { ...opts, style: tinyStyle, seed: (opts.seed ^ 0x27d4eb2f) >>> 0 },
       attempts * 2,

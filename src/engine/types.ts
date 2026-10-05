@@ -59,10 +59,14 @@ export interface SolveMetrics {
   eliminateCount: number;
   /** 逻辑推理到底时已完成的比例 0..1 */
   logicProgress: number;
+  /** 组合推理步数（第 3 层及以上的技术）—— 最贴近“人觉得难不难”的指标 */
+  hardSteps: number;
   /** 是否必须动用“排除法/反证”兜底才能推进 */
   needsRefutation: boolean;
   /** 完整解法里用了多少次排除法（反证） */
   refutationSteps: number;
+  /** 推理过程中平均剩余候选数（阅读负担：棋盘越绕，这个数越大） */
+  avgCandidates: number;
   /** 唯一性未被证实（预算不足） */
   unproven?: boolean;
 }
@@ -91,6 +95,16 @@ export interface DifficultyFeatures {
   lineConfinedColors: number;
   /** 整行/整列同色的比例 */
   monoLineRatio: number;
+  /** 组合推理步数（第 3 层及以上） */
+  hardSteps: number;
+  /** 平均每头牛需要多少步组合推理 */
+  hardPerCow: number;
+  /** 小颜色（≤3 格）占的格子比例 —— 越大越简单 */
+  tinyShare: number;
+  /** 最大颜色块占的格子比例 —— 越大越难（需要长距离推理） */
+  giantShare: number;
+  /** 平均剩余候选数（阅读负担） */
+  avgCandidates: number;
 }
 
 export interface PuzzleMeta {
@@ -127,6 +141,12 @@ export interface PuzzleTarget {
   requireLogic?: boolean;
   /** 必须用到排除法/反证兜底（更高难度） */
   requireRefutation?: boolean;
+  /** 至少要多少步组合推理（第 3 层及以上） */
+  minHardSteps?: number;
+  /** 至少要用几次排除法（反证） */
+  minRefutationSteps?: number;
+  /** 硬性最低难度分（最高档次用它保证“真的难”，不允许悄悄降级） */
+  minScore?: number;
 }
 
 export interface GenerateOptions {
@@ -156,6 +176,8 @@ export interface CellRef {
 export interface ShapeStyle {
   /** 颜色大小的不均匀程度：0 = 每种颜色一样大（约束很弱，几乎必然多解），1 = 大量 1-3 格的小颜色 */
   small: number;
+  /** 是否允许出现特别大的色块（0~1，越大越容易出现“巨型色块”，难度更高） */
+  giant: number;
   segments: number;
   crosses: number;
   compactness: number;
