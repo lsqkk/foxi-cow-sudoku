@@ -189,6 +189,17 @@ export function PlayView(props: Props) {
             <span>生成难度分</span>
             <b>{meta.score.toFixed(2)} / 10（{meta.label}）</b>
           </div>
+          {meta.target?.score !== undefined && (
+            <div className="inforow">
+              <span>本次生成目标</span>
+              <b>
+                {meta.target.score.toFixed(1)}
+                {Math.abs(meta.target.score - meta.score) > 1.5
+                  ? '（该尺寸下达不到，已给出最接近的关卡）'
+                  : '（已贴近目标）'}
+              </b>
+            </div>
+          )}
           <div className="inforow">
             <span>纯逻辑可解</span>
             <b>{meta.metrics.solvableByLogic ? '是（不需要试错）' : meta.metrics.needsRefutation ? '需要排除法/反证' : '否'}</b>

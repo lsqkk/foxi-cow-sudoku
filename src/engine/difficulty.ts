@@ -152,14 +152,15 @@ export function scorePuzzle(features: DifficultyFeatures, metrics: SolveMetrics)
   const deficit = clamp(1 - metrics.logicProgress, 0, 1);
   const refutationPenalty = metrics.needsRefutation ? 1.4 + 4.6 * deficit : 0;
   const searchPenalty = 0.45 * Math.min(metrics.guessDepth, 4);
-  return clamp(1 + base + refutationPenalty + searchPenalty, 1, 10);
+  // 把实测的分布（约 1.3~6.5）拉伸到 1~10，让滑杆真的能拉开差距
+  return clamp(1 + (base + refutationPenalty + searchPenalty) * 1.42, 1, 10);
 }
 
 export function difficultyLabel(score: number): string {
-  if (score < 2.5) return '入门';
-  if (score < 4) return '简单';
-  if (score < 5.8) return '中等';
-  if (score < 7.5) return '困难';
+  if (score < 3.2) return '入门';
+  if (score < 4.8) return '简单';
+  if (score < 6.6) return '中等';
+  if (score < 8.4) return '困难';
   return '大师';
 }
 
@@ -190,8 +191,8 @@ const LADDER: LadderRow[] = [
   { score: 6, n: 10, small: 0.5, segments: 0.24, crosses: 0.12, compactness: 0.55, minTier: 3 },
   { score: 7, n: 10, small: 0.44, segments: 0.2, crosses: 0.1, compactness: 0.47, minTier: 3 },
   { score: 8, n: 11, small: 0.4, segments: 0.16, crosses: 0.08, compactness: 0.4, minTier: 3 },
-  { score: 9, n: 12, small: 0.36, segments: 0.12, crosses: 0.06, compactness: 0.32, minTier: 4, refute: true },
-  { score: 10, n: 13, small: 0.32, segments: 0.1, crosses: 0.05, compactness: 0.26, minTier: 4, refute: true },
+  { score: 9, n: 12, small: 0.36, segments: 0.12, crosses: 0.06, compactness: 0.32, minTier: 3 },
+  { score: 10, n: 13, small: 0.32, segments: 0.1, crosses: 0.05, compactness: 0.26, minTier: 3 },
 ];
 
 export function profileForScore(score: number, sizeOverride?: number): GenerationProfile {
@@ -208,11 +209,15 @@ export function profileForScore(score: number, sizeOverride?: number): Generatio
   const t = hi.score === lo.score ? 0 : (s - lo.score) / (hi.score - lo.score);
   const lerp = (a: number, b: number) => a + (b - a) * t;
   const minTier = Math.round(lerp(lo.minTier, hi.minTier));
-  const requireRefutation = (lo.refute ?? false) || (hi.refute ?? false);
+  const n = sizeOverride ?? Math.round(lerp(lo.n, hi.n));
+  // 实测：棋盘越大，唯一解越依赖“小颜色”。低于这个下限时几乎全是多解，
+  // 生成器只能不断重试/退化，所以这里按尺寸给一个下限（easy 高、hard 低）。
+  const minSmall = clamp(0.42 + Math.max(0, n - 8) * 0.045, 0.42, 0.68);
+  const small = Math.max(minSmall, lerp(lo.small, hi.small));
   return {
-    n: sizeOverride ?? Math.round(lerp(lo.n, hi.n)),
+    n,
     style: {
-      small: lerp(lo.small, hi.small),
+      small,
       segments: lerp(lo.segments, hi.segments),
       crosses: lerp(lo.crosses, hi.crosses),
       compactness: lerp(lo.compactness, hi.compactness),
@@ -220,7 +225,6 @@ export function profileForScore(score: number, sizeOverride?: number): Generatio
     target: {
       score: s,
       minTier: minTier > 0 ? minTier : undefined,
-      requireRefutation: requireRefutation || undefined,
       requireLogic: s < 9,
     },
   };

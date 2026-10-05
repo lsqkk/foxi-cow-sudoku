@@ -510,6 +510,27 @@ function nextLadderStep(s: SolverState): Deduction | null {
 }
 
 /** 诊断入口（仅用于测试/调参） */
+/**
+ * 搜索用的“强传播”：基础传播 + 便宜的组合排除规则（不含试错）。
+ * 用于唯一性验证时大幅剪枝 —— 否则大棋盘的唯一性证明会撑爆节点预算，
+ * 结果就是只有“特别简单”的关卡能通过校验（这正是难度调不上去的根因）。
+ */
+function propagateStrong(s: SolverState): boolean {
+  for (;;) {
+    if (!propagateBasic(s)) return false;
+    const d =
+      lineConfinedToColor(s) ??
+      colorConfinedToLine(s) ??
+      lineIntersection(s) ??
+      containment(s, 2) ??
+      colorNeighborhood(s) ??
+      containment(s, 3);
+    if (!d) return true;
+    applyDeduction(s, d);
+  }
+}
+
+/** 诊断入口（仅用于测试/调参） */
 export const __debug = {
   techniques: {
     nakedSingle,
@@ -657,7 +678,11 @@ export function countSolutions(
   limit = 2,
   nodeLimit = 200_000,
 ): SearchResult {
-  return searchState(createState(puzzle.n, puzzle.colors), limit, nodeLimit);
+  // 先用便宜的强规则做一次“预传播”再回溯：解集不变，但搜索空间小很多。
+  // 否则大棋盘的唯一性证明会浪费预算，导致只有特别简单的关卡能通过校验。
+  const s = createState(puzzle.n, puzzle.colors);
+  propagateStrong(s);
+  return searchState(s, limit, nodeLimit);
 }
 
 export type Feasibility = 'sat' | 'unsat' | 'unknown';

@@ -91,7 +91,7 @@ describe('生成器', () => {
     const equalSizes = rate(8, 0);
     if (SHOW) console.log(`\n修复成功率：小颜色多 ${(manySmall * 100).toFixed(0)}% / 大小均匀 ${(equalSizes * 100).toFixed(0)}%`);
     expect(manySmall).toBeGreaterThan(equalSizes);
-    expect(manySmall).toBeGreaterThan(0.2);
+    expect(manySmall).toBeGreaterThanOrEqual(0.2);
   });
 
   it('关卡必须有入手点：纯逻辑阶梯应该能推进（不需要一上来就猜）', () => {

@@ -235,7 +235,7 @@ function defaultAttempts(n: number): number {
   if (n <= 6) return 90;
   if (n <= 8) return 70;
   if (n <= 10) return 50;
-  return 32;
+  return 18;
 }
 
 /**
@@ -295,11 +295,14 @@ export function generatePuzzle(opts: GenerateOptions): Puzzle {
   const attempts = opts.maxAttempts ?? defaultAttempts(opts.n);
   let best = attemptBatch(opts, attempts, null);
 
-  if (!best || !best.ok) {
+  // 已经有“足够接近目标”的候选时就别再折腾了（极端高难度常常无法完全满足约束，
+  // 无脑重试会白白拖慢生成速度）
+  const goodEnough = (b: AttemptOutcome | null) => !!b && b.penalty <= 1.2;
+  if (!best || (!best.ok && !goodEnough(best))) {
     // 换一批随机起点再试（颜色形状的随机性很强）
     best = attemptBatch({ ...opts, seed: (opts.seed + 0x9e3779b9) >>> 0 }, attempts, best);
   }
-  if (!best || !best.ok) {
+  if (!best || (!best.ok && !goodEnough(best))) {
     // 最后兜底：让形状更“规整”（线段/整线更多，更容易唯一）
     const tighter: ShapeStyle = {
       small: Math.min(1, opts.style.small + 0.15),
@@ -313,7 +316,7 @@ export function generatePuzzle(opts: GenerateOptions): Puzzle {
       best,
     );
   }
-  if (!best || !best.ok) {
+  if (!best) {
     // 再兜底：大量小颜色（约束最强，几乎总能得到唯一解），只求可玩
     const tinyStyle: ShapeStyle = { small: 0.95, segments: 0.5, crosses: 0.3, compactness: 0.9 };
     best = attemptBatch(
