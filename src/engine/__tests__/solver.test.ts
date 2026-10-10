@@ -2,9 +2,11 @@ import { describe, expect, it } from 'vitest';
 import { growRegions, randomSolution } from '../board';
 import { mulberry32 } from '../rng';
 import {
+  __debug,
   analyzePuzzle,
   countSolutions,
   createState,
+  eliminateInState,
   hintForMarks,
   placeCowInState,
   runLadder,
@@ -165,5 +167,47 @@ describe('游戏内提示', () => {
     marks[1 * p.n + p.solution[1]] = 1;
     const { conflict } = hintForMarks(p, marks);
     expect(conflict).toBe(true);
+  });
+
+  it('提示从最简单的推理开始（先给“唯一候选”这类一眼可见的步骤）', () => {
+    const p = puzzle();
+    const marks = new Uint8Array(p.n * p.n);
+    const { deduction } = hintForMarks(p, marks);
+    expect(deduction).not.toBeNull();
+    expect(deduction!.tier).toBe(1);
+  });
+
+  it('沿着提示一路走一定能解完，中途不会出现“没有提示”', () => {
+    const p = puzzle();
+    const n = p.n;
+    const marks = new Uint8Array(n * n);
+    for (let guard = 0; guard < 300; guard++) {
+      const { deduction, conflict } = hintForMarks(p, marks);
+      expect(conflict).toBe(false);
+      expect(deduction).not.toBeNull();
+      if (!deduction) break;
+      if (deduction.kind === 'place') marks[deduction.targets[0]] = 2;
+      else for (const t of deduction.targets) marks[t] = 1;
+      if (marks.filter((m) => m === 2).length === n) break;
+    }
+    expect(marks.filter((m) => m === 2).length).toBe(n);
+  });
+
+  it('颜色相关的提示会把整块颜色都框上（提示框不会加不全）', () => {
+    const n = 7;
+    const { colors, solution } = makeRawPuzzle(n, 2024, 0.8);
+    const s = createState(n, colors);
+    // 任选一种颜色，把它排除到只剩真解那一格，逼出“颜色唯一候选”的推理
+    const k = colors[0][0];
+    const colorCells: number[] = [];
+    for (let r = 0; r < n; r++) for (let c = 0; c < n; c++) if (colors[r][c] === k) colorCells.push(r * n + c);
+    const keepRow = solution.findIndex((c, r) => colors[r][c] === k);
+    const keepCell = keepRow * n + solution[keepRow];
+    for (const i of colorCells) if (i !== keepCell) eliminateInState(s, i);
+    const d = __debug.techniques.colorSingle(s);
+    expect(d).not.toBeNull();
+    const refColor = s.color[d!.targets[0]];
+    // 提示框必须覆盖“被提到的整块颜色”
+    for (const i of s.colorCells[refColor]) expect(d!.cells).toContain(i);
   });
 });

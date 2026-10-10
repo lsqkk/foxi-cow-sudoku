@@ -37,6 +37,7 @@ import {
   faTrophy,
   faVolumeHigh,
   faVolumeXmark,
+  faWandMagicSparkles,
   faXmark,
 } from '@fortawesome/free-solid-svg-icons';
 import type { IconDefinition } from '@fortawesome/fontawesome-svg-core';
@@ -79,6 +80,7 @@ export const ICONS = {
   forward: faArrowRight,
   progress: faBarsProgress,
   contrast: faCircleHalfStroke,
+  auto: faWandMagicSparkles,
   sound: faVolumeHigh,
   mute: faVolumeXmark,
 } satisfies Record<string, IconDefinition>;

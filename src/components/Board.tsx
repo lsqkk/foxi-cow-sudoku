@@ -1,6 +1,6 @@
 import { useCallback, useRef } from 'react';
 import { colorOf } from '../game/theme';
-import type { Mark } from '../game/useGame';
+import { isLockedMark, type Mark } from '../game/useGame';
 
 interface BoardProps {
   n: number;
@@ -10,13 +10,10 @@ interface BoardProps {
   disabled?: boolean;
   hintCells: number[];
   hintTargets: number[];
-  wrongCells: number[];
   onBeginStroke: () => void;
   onPaint: (cell: number, value: Mark) => void;
   onEndStroke: () => void;
-  onTapX: (cell: number) => void;
   onCow: (cell: number) => void;
-  onRemoveCow: (cell: number) => void;
 }
 
 const DOUBLE_TAP_MS = 320;
@@ -25,12 +22,13 @@ const DOUBLE_TAP_MS = 320;
  * 棋盘：支持原版的操作方式
  * - 单击空格：打 ×；单击 ×：取消
  * - 从空格/×拖动：连续打 × / 连续取消
- * - 双击：放小牛；单击小牛：拿走
+ * - 双击：放小牛（放上就固定，不能再取消）
+ * - 双击放错的位置：直接变成一个固定的红叉
  */
 export function Board(props: BoardProps) {
-  const { n, colors, marks, colorBlind, disabled, hintCells, hintTargets, wrongCells } = props;
+  const { n, colors, marks, colorBlind, disabled, hintCells, hintTargets } = props;
   const wrapRef = useRef<HTMLDivElement>(null);
-  const stroke = useRef<{ mode: 'paint' | 'erase' | 'cow'; moved: boolean; start: number; lastCell: number } | null>(null);
+  const stroke = useRef<{ mode: 'paint' | 'erase'; moved: boolean; start: number; lastCell: number } | null>(null);
   const lastTap = useRef<{ cell: number; time: number } | null>(null);
 
   const cellAt = useCallback((clientX: number, clientY: number): number | null => {
@@ -52,10 +50,7 @@ export function Board(props: BoardProps) {
         /* 合成事件/某些浏览器可能不支持，忽略即可（不影响拖动逻辑） */
       }
       e.preventDefault();
-      if (marks[cell] === 2) {
-        stroke.current = { mode: 'cow', moved: false, start: cell, lastCell: cell };
-        return;
-      }
+      if (isLockedMark(marks[cell])) return; // 小牛 / 红叉已固定，点了也不动
       const mode: 'paint' | 'erase' = marks[cell] === 1 ? 'erase' : 'paint';
       props.onBeginStroke();
       props.onPaint(cell, mode === 'paint' ? 1 : 0);
@@ -67,7 +62,7 @@ export function Board(props: BoardProps) {
   const onPointerMove = useCallback(
     (e: React.PointerEvent<HTMLDivElement>) => {
       const s = stroke.current;
-      if (!s || s.mode === 'cow' || disabled) return;
+      if (!s || disabled) return;
       const cell = cellAt(e.clientX, e.clientY);
       if (cell === null || cell === s.lastCell) return;
       s.lastCell = cell;
@@ -85,16 +80,10 @@ export function Board(props: BoardProps) {
       const now = performance.now();
       const isDouble = lastTap.current !== null && lastTap.current.cell === s.start && now - lastTap.current.time < DOUBLE_TAP_MS;
 
-      if (s.mode === 'cow') {
-        if (!s.moved && !isDouble) props.onRemoveCow(s.start);
-        lastTap.current = null;
-        return;
-      }
-
       props.onEndStroke();
 
       if (isDouble) {
-        // 第二下：先把这一下打上的 × 清掉，再放牛
+        // 第二下：先把这一下打上的 × 清掉，再放牛（放上即固定）
         props.onPaint(s.start, 0);
         props.onCow(s.start);
         lastTap.current = null;
@@ -109,7 +98,6 @@ export function Board(props: BoardProps) {
 
   const hintSet = new Set(hintCells);
   const targetSet = new Set(hintTargets);
-  const wrongSet = new Set(wrongCells);
   const cellSize = n >= 12 ? 4 : n >= 10 ? 5 : 6;
 
   return (
@@ -134,7 +122,7 @@ export function Board(props: BoardProps) {
           mark === 2 ? 'cow' : '',
           hintSet.has(i) ? 'hint-reason' : '',
           targetSet.has(i) ? 'hint-target' : '',
-          wrongSet.has(i) ? 'wrong' : '',
+          mark === 3 ? 'wrong' : '',
         ]
           .filter(Boolean)
           .join(' ');
@@ -146,7 +134,7 @@ export function Board(props: BoardProps) {
             style={{ background: def.bg, backgroundImage: colorBlind ? def.pattern : undefined }}
           >
             {colorBlind && <span className="cb-letter">{def.letter}</span>}
-            {mark === 1 && (
+            {(mark === 1 || mark === 3) && (
               <svg className="xmark" viewBox="0 0 24 24" aria-hidden>
                 <line x1="6" y1="6" x2="18" y2="18" />
                 <line x1="18" y1="6" x2="6" y2="18" />

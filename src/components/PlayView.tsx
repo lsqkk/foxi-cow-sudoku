@@ -188,20 +188,23 @@ export function PlayView(props: Props) {
           disabled={api.finished || generating}
           hintCells={api.hint?.cells ?? []}
           hintTargets={api.hint?.targets ?? []}
-          wrongCells={api.wrongCells}
           onBeginStroke={api.beginStroke}
           onPaint={api.paint}
           onEndStroke={api.endStroke}
-          onTapX={api.tapX}
           onCow={api.placeCow}
-          onRemoveCow={api.removeCow}
         />
         {generating && (
           <div className="boardmask">
             <Icon name="hourglass" spin /> 正在生成关卡…
           </div>
         )}
-        {api.paused && !api.finished && !api.failed && <div className="boardmask">已暂停</div>}
+        {api.paused && !api.finished && !api.failed && (
+          <div className="boardmask clickable" onClick={() => api.setPaused(false)} role="button" tabIndex={0}>
+            <span>
+              <Icon name="pause" /> 已暂停 · 点这里继续
+            </span>
+          </div>
+        )}
         {api.failed && (
           <div className="winmask">
             <div className="winbox">
@@ -246,7 +249,13 @@ export function PlayView(props: Props) {
               </div>
               <div className="winbtns">
                 <button className="primary" onClick={props.onNext}>
-                  {spec.mode === 'classic' ? '下一关' : spec.mode === 'timeattack' ? '继续挑战' : '再来一张'}
+                  {spec.mode === 'classic'
+                    ? '下一关'
+                    : spec.mode === 'timeattack'
+                      ? spec.level >= TIME_ATTACK_LEVELS
+                        ? '完成'
+                        : '继续挑战'
+                      : '再来一张'}
                 </button>
                 <button onClick={props.onReplay}>
                   <Icon name="restart" /> 重玩本关
@@ -293,6 +302,13 @@ export function PlayView(props: Props) {
         <button className={settings.colorBlind ? 'active' : ''} onClick={() => props.onSettings({ colorBlind: !settings.colorBlind })}>
           <Icon name="eye" /> 色盲
         </button>
+        <button
+          className={settings.autoExclude ? 'active' : ''}
+          title="放下小牛后自动排除同行 / 同列 / 同色区域 / 周围 8 格"
+          onClick={() => props.onSettings({ autoExclude: !settings.autoExclude })}
+        >
+          <Icon name="auto" /> 自动排除
+        </button>
         <button onClick={() => api.setPaused(!api.paused)} disabled={api.finished}>
           <Icon name={api.paused ? 'resume' : 'pause'} /> {api.paused ? '继续' : '暂停'}
         </button>
@@ -306,7 +322,8 @@ export function PlayView(props: Props) {
 
       <div className="setrow">
         <span className="tip">
-          单击打 ×／再单击取消 · 按住拖动可连续打 × · 双击放小牛 · 单击小牛拿走
+          单击打 ×／再单击取消 · 按住拖动可连续打 × · 双击放小牛（放上就固定，放错会变红叉）
+          {settings.autoExclude ? ' · 放下牛后自动排除同行/同列/同色/周围8格' : ' · 自动排除已关闭'}
         </span>
       </div>
 

@@ -4,6 +4,7 @@ import { PRESETS, profileForScore } from '../difficulty';
 import { generateLevel, generatePuzzle, repairToUnique } from '../generator';
 import { mulberry32 } from '../rng';
 import { countSolutions, runLadder } from '../solver';
+import { buildPuzzle, specForCustom } from '../../game/levels';
 
 const SHOW = process.env.SHOW_DIST === '1';
 
@@ -105,6 +106,55 @@ describe('生成器', () => {
       }
       if (SHOW) console.log(`\n${preset.name}: 逻辑推进 ≥50% 的关卡 ${progressed}/${samples}`);
       expect(progressed).toBeGreaterThan(0);
+    }
+  });
+
+  it('高难度关卡：小颜色不多、单个色块不夸张，而且真的要多步组合推理', () => {
+    for (const [score, n, seed] of [
+      [7, 10, 1000],
+      [9, 12, 1000],
+    ] as [number, number, number][]) {
+      const pr = profileForScore(score, n);
+      const p = generatePuzzle({ n, style: pr.style, seed, target: pr.target, nodeLimit: 150_000 });
+      const res = countSolutions({ n: p.n, colors: p.colors }, 2, 300_000);
+      expect(res.count).toBe(1);
+      // 原版一般不超过 3 个“小颜色”，最大色块也不会吃掉半张棋盘
+      expect(p.meta.features.tinyColors).toBeLessThanOrEqual(3);
+      expect(p.meta.features.giantShare).toBeLessThanOrEqual(0.48);
+      // 真的需要多步组合推理，而不是一眼可见的白送线索
+      expect(p.meta.metrics.hardSteps).toBeGreaterThanOrEqual(10);
+      if (SHOW) {
+        console.log(
+          `\n难度${score} ${n}×${n}: 分${p.meta.score.toFixed(2)} 小颜色${p.meta.features.tinyColors} 最大色块${p.meta.features.giantShare.toFixed(
+            2,
+          )} 组合步${p.meta.metrics.hardSteps}`,
+        );
+      }
+    }
+  });
+
+  it('中高难度：组合推理与反证 / 试错步数都达到硬性下限', () => {
+    for (const [score, n, seed] of [
+      [7, 10, 1000],
+      [8, 11, 1000],
+      [9, 12, 1000],
+    ] as [number, number, number][]) {
+      const p = buildPuzzle(specForCustom(score, n, seed));
+      const target = p.meta.target!;
+      expect(target.minHardSteps).toBeGreaterThan(0);
+      expect(p.meta.metrics.hardSteps).toBeGreaterThanOrEqual(target.minHardSteps!);
+      if (target.minRefuteishSteps) {
+        expect(p.meta.features.refuteishSteps).toBeGreaterThanOrEqual(target.minRefuteishSteps);
+      }
+      const res = countSolutions({ n: p.n, colors: p.colors }, 2, 300_000);
+      expect(res.count).toBe(1);
+      if (SHOW) {
+        console.log(
+          `\n难度${score}: 分${p.meta.score.toFixed(1)} 组合步${p.meta.metrics.hardSteps}/${target.minHardSteps} 反证类${p.meta.features.refuteishSteps}${
+            target.minRefuteishSteps ? `/${target.minRefuteishSteps}` : ''
+          }`,
+        );
+      }
     }
   });
 });

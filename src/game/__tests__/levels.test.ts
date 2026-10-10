@@ -3,6 +3,7 @@ import { countSolutions } from '../../engine/solver';
 import { analyzePuzzle } from '../../engine/solver';
 import {
   TIME_ATTACK_LEVELS,
+  applyRefutationDice,
   buildPuzzle,
   classicDifficulty,
   decodeLevelCode,
@@ -13,11 +14,14 @@ import {
   specForTimeAttack,
   specForZen,
 } from '../levels';
+import { profileForScore } from '../../engine/difficulty';
 import { DEFAULT_META, mergeRecord, starsFor, type LevelRecord } from '../storage';
 import { buildParams, specFromUrl } from '../urlState';
+import { parseLevelInput } from '../urlState';
 import { unlockChallenge } from '../levels';
 
 const SHOW = process.env.SHOW_DIST === '1';
+const base9 = profileForScore(9.6, 13).target;
 
 function checkPuzzle(spec: Parameters<typeof buildPuzzle>[0]): ReturnType<typeof buildPuzzle> {
   const p = buildPuzzle(spec);
@@ -100,6 +104,25 @@ describe('关卡与模式', () => {
     expect(specFromUrl('')!).toBeNull();
   });
 
+  it('粘贴导入同时支持关卡码和分享链接 / 网址', () => {
+    const custom = specForCustom(8.5, 11, 4242);
+    const code = encodeLevelCode(custom);
+    expect(parseLevelInput(code)?.seed).toBe(custom.seed >>> 0);
+
+    const url = `https://example.com/foxi-cow-sudoku/?m=custom&code=${code}`;
+    expect(parseLevelInput(url)?.seed).toBe(custom.seed >>> 0);
+
+    const classic = specForClassic(30);
+    const classicUrl = `https://example.com/foxi-cow-sudoku/?${buildParams(classic)}`;
+    const parsed = parseLevelInput(classicUrl);
+    expect(parsed?.mode).toBe('classic');
+    expect(parsed?.level).toBe(30);
+    expect(parsed?.seed).toBe(classic.seed >>> 0);
+
+    expect(parseLevelInput('乱写的东西')).toBeNull();
+    expect(parseLevelInput('')).toBeNull();
+  });
+
   it('解锁挑战的限时与错误上限随难度递增', () => {
     const l1 = unlockChallenge(1);
     const l400 = unlockChallenge(400);
@@ -107,6 +130,22 @@ describe('关卡与模式', () => {
     expect(l400.timeLimitMs).toBeLessThanOrEqual(600_000);
     expect(l400.timeLimitMs).toBeGreaterThan(l1.timeLimitMs);
     expect(l400.mistakeLimit).toBeGreaterThanOrEqual(l1.mistakeLimit);
+  });
+
+  it('最高难度档的“反证骰子”：同种子结果固定，且按概率命中', () => {
+    // 确定性：同一 (难度, 种子) 永远得到同一结果
+    expect(applyRefutationDice(base9, 9.6, 12345)).toEqual(applyRefutationDice(base9, 9.6, 12345));
+    // 低难度不掷骰子
+    expect(applyRefutationDice({ score: 4 }, 4, 1)).toEqual({ score: 4 });
+    // 命中率大致符合设定（用不同种子统计）
+    let hits = 0;
+    const total = 400;
+    for (let i = 0; i < total; i++) {
+      const t = applyRefutationDice(base9, 9.6, 90000 + i * 7817);
+      if ((t.minRefuteishSteps ?? 0) > (base9.minRefuteishSteps ?? 0)) hits++;
+    }
+    expect(hits).toBeGreaterThan(total * 0.35);
+    expect(hits).toBeLessThan(total * 0.75);
   });
 
   it('星级与成绩合并规则正确', () => {

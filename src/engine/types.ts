@@ -99,8 +99,12 @@ export interface DifficultyFeatures {
   hardSteps: number;
   /** 平均每头牛需要多少步组合推理 */
   hardPerCow: number;
+  /** 反证 / 试错类步数（一步反证、反证：颜色无处可放、排除法） */
+  refuteishSteps: number;
   /** 小颜色（≤3 格）占的格子比例 —— 越大越简单 */
   tinyShare: number;
+  /** 小颜色（≤3 格）的个数 —— 原版一般不超过 3 个，太多会让关卡变简单 */
+  tinyColors: number;
   /** 最大颜色块占的格子比例 —— 越大越难（需要长距离推理） */
   giantShare: number;
   /** 平均剩余候选数（阅读负担） */
@@ -143,8 +147,14 @@ export interface PuzzleTarget {
   requireRefutation?: boolean;
   /** 至少要多少步组合推理（第 3 层及以上） */
   minHardSteps?: number;
+  /** 至少要多少步“反证 / 试错”类推理（第 4 层及以上） */
+  minRefuteishSteps?: number;
   /** 至少要用几次排除法（反证） */
   minRefutationSteps?: number;
+  /** 最多允许几个“小颜色”（≤3 格）—— 高难度档用它贴近原版手感 */
+  maxTinyColors?: number;
+  /** 最大颜色块占比的上限 —— 高难度档不让单个色块吃掉半张棋盘 */
+  maxGiantShare?: number;
   /** 硬性最低难度分（最高档次用它保证“真的难”，不允许悄悄降级） */
   minScore?: number;
 }

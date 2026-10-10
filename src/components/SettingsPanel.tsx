@@ -35,12 +35,28 @@ export function SettingsPanel({ settings, onChange, onBack }: Props) {
           返回
         </button>
       </div>
-      <Row title="放错立刻提示" desc="关掉后放错的牛会留在棋盘上，更接近“自己发现矛盾”的玩法">
+      <Row
+        title="放错立刻提示"
+        desc="打开后放错的位置会立刻变成固定的红叉；关掉后错误的牛留在盘上，靠自己发现矛盾"
+      >
         <label className="switch">
           <input
             type="checkbox"
             checked={settings.strictMistakes}
             onChange={(e) => onChange({ strictMistakes: e.target.checked })}
+          />
+          <span />
+        </label>
+      </Row>
+      <Row
+        title="放下自动排除"
+        desc="放下小牛后，自动把同行、同列、同色区域和周围 8 格打上 ×（对局面板也能随时开关）"
+      >
+        <label className="switch">
+          <input
+            type="checkbox"
+            checked={settings.autoExclude}
+            onChange={(e) => onChange({ autoExclude: e.target.checked })}
           />
           <span />
         </label>

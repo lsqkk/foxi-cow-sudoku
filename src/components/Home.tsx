@@ -13,6 +13,9 @@ interface Props {
   onRecords: () => void;
   onSettings: () => void;
   onRules: () => void;
+  /** 是否有一局还没打完（切到别的页面后还能回来接着玩） */
+  inGame: boolean;
+  onResume: () => void;
 }
 
 /** 首页：进来先看到进度、模式入口和战绩，而不是直接开局 */
@@ -30,8 +33,23 @@ export function Home(props: Props) {
         <div className="hero-text">
           <h1>佛系消消消 · 纯净版</h1>
           <p>数独 × 扫雷 · 无体力 · 无广告 · 关卡本地即时生成（唯一解、纯逻辑可解）</p>
+          <p className="hero-tip">
+            <Icon name="info" /> 不会玩？顶栏的「<button className="linkbtn" onClick={props.onRules}>规则玩法</button>
+            」里有规则、操作说明和每种推理方法的图示。
+          </p>
         </div>
       </section>
+
+      {props.inGame && (
+        <button className="resumecard" onClick={props.onResume}>
+          <Icon name="play" />
+          <span>
+            <b>对局进行中</b>
+            <small>回到棋盘接着玩（已自动暂停计时）</small>
+          </span>
+          <Icon name="next" className="mc-arrow" />
+        </button>
+      )}
 
       <section className="homemain">
         <div className="continuecard">

@@ -17,7 +17,8 @@ const PAGE = 60;
 
 /** 经典闯关的关卡选择：显示进度、星级、最好成绩 */
 export function LevelSelect({ unlocked, records, onPick, onChallenge, onBack, initialPending }: Props) {
-  const [page, setPage] = useState(0);
+  // 默认停在“当前正在挑战的那一关”所在页
+  const [page, setPage] = useState(() => Math.max(0, Math.floor((Math.max(1, unlocked) - 1) / PAGE)));
   const [pending, setPending] = useState<number | null>(initialPending ?? null);
   const [jump, setJump] = useState('');
   const touchStart = useRef<{ x: number; y: number } | null>(null);
@@ -115,7 +116,12 @@ export function LevelSelect({ unlocked, records, onPick, onChallenge, onBack, in
           return (
             <button
               key={level}
-              className={'levelcell' + (locked ? ' locked' : '') + (rec?.cleared ? ' cleared' : '')}
+              className={
+                'levelcell' +
+                (locked ? ' locked' : '') +
+                (rec?.cleared ? ' cleared' : '') +
+                (level === unlocked ? ' current' : '')
+              }
               title={`难度 ${classicDifficulty(level).toFixed(1)}${rec ? ` · 最好 ${(rec.timeMs / 1000).toFixed(0)}s` : ''}`}
               onClick={() => (locked ? setPending(level) : onPick(level))}
             >

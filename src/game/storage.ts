@@ -11,6 +11,8 @@ export interface Settings {
   showTimer: boolean;
   sound: boolean;
   theme: ThemeMode;
+  /** 放下小牛后自动排除同行 / 同列 / 同色区域 / 周围 8 格 */
+  autoExclude: boolean;
 }
 
 export const DEFAULT_SETTINGS: Settings = {
@@ -19,6 +21,7 @@ export const DEFAULT_SETTINGS: Settings = {
   showTimer: true,
   sound: true,
   theme: 'auto',
+  autoExclude: true,
 };
 
 export interface Progress {

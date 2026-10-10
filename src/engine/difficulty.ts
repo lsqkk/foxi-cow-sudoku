@@ -121,6 +121,11 @@ export function extractFeatures(n: number, colors: number[][], metrics: SolveMet
   for (const [id, count] of Object.entries(metrics.techniqueCounts)) {
     tierCost += (TECHNIQUE_COST[id as TechniqueId] ?? 0) * (count ?? 0);
   }
+  // 反证 / 试错类步数：一步反证、反证“颜色无处可放”，以及兜底的排除法
+  const refuteishSteps =
+    (metrics.techniqueCounts['lookahead'] ?? 0) +
+    (metrics.techniqueCounts['color-wipeout'] ?? 0) +
+    (metrics.refutationSteps ?? 0);
 
   return {
     n,
@@ -140,7 +145,9 @@ export function extractFeatures(n: number, colors: number[][], metrics: SolveMet
     monoLineRatio: monoLines / (2 * n),
     hardSteps: metrics.hardSteps,
     hardPerCow: metrics.hardSteps / n,
+    refuteishSteps,
     tinyShare,
+    tinyColors: sizes.filter((s) => s <= 3).length,
     giantShare,
     avgCandidates: metrics.avgCandidates,
   };
@@ -150,14 +157,15 @@ export function extractFeatures(n: number, colors: number[][], metrics: SolveMet
  * 生成难度分（1..10，约等于“平均每头牛要花多少思考量”）。
  *
  * 设计原则：
- * - 主要看关卡设计：用了哪些技巧、要不要反证/排除法、颜色是否缠绕。
+ * - 主要看“人解这一关要动多少脑”：组合推理步数、阅读负担、要不要反证。
  * - 棋盘大小只做 ±10% 的轻微修正：10×10 也可以很简单，12/13 也可能只是中等。
+ * - 不再奖励“巨型色块”：实测单个色块越大，别的小颜色反而越多、越容易一眼看穿。
  */
 export function scorePuzzle(features: DifficultyFeatures, metrics: SolveMetrics): number {
   const sizeFactor = 1 + 0.02 * (features.n - 8);
   const H = designHardness(features, metrics);
-  // 标定：让“最规整的入门关”落在 ~2 分，“能做出来的最难关”落在 ~9.5 分
-  const score = 0.9 + 18.5 * H * sizeFactor;
+  // 标定：最规整的入门关 ~2 分，需要多步组合推理/反证的难关照常能到 8~10 分
+  const score = 1 + 13 * H * sizeFactor;
   return clamp(score, 1, 10);
 }
 
@@ -168,14 +176,14 @@ export function scorePuzzle(features: DifficultyFeatures, metrics: SolveMetrics)
 export function designHardness(features: DifficultyFeatures, metrics: SolveMetrics): number {
   const norm = (x: number, a: number, b: number) => clamp((x - a) / (b - a), 0, 1);
   const H =
-    0.3 * norm(features.hardPerCow, 0, 0.5) +
-    0.22 * norm(features.giantShare, 0.2, 0.6) +
-    0.16 * norm(features.winding, 0.1, 0.9) +
-    0.18 * norm(features.avgCandidates / features.n, 0.7, 1.8) +
-    (metrics.needsRefutation ? 0.22 + 0.07 * Math.min(metrics.refutationSteps, 4) : 0) -
-    0.3 * norm(features.tinyShare, 0, 0.25) -
-    0.18 * norm(features.lineConfinedColors, 0, 0.6) -
-    0.12 * norm(features.monoLineRatio, 0, 0.3);
+    0.3 * norm(features.hardPerCow, 0, 2.5) +
+    0.28 * norm(features.avgCandidates / features.n, 0.8, 5) +
+    0.2 * norm(features.winding, 0.15, 0.85) +
+    0.1 * norm(metrics.refutationSteps, 0, 5) +
+    (metrics.needsRefutation ? 0.1 : 0) -
+    0.07 * norm(features.tinyShare, 0.06, 0.28) -
+    0.05 * norm(features.lineConfinedColors, 0.4, 0.85) -
+    0.03 * norm(features.monoLineRatio, 0.08, 0.3);
 
   return clamp(H, 0, 1);
 }
@@ -205,21 +213,29 @@ interface LadderRow {
   compactness: number;
   minTier: number;
   minHard: number;
-  refute?: boolean;
+  /** 至少多少步“反证 / 试错”类推理 */
+  minRefuteish?: number;
+  /** 最多允许几个小颜色（≤3 格） */
+  maxTiny?: number;
+  /** 最大颜色块占比上限 */
+  maxGiant?: number;
 }
 
-/** 难度刻度：分数 -> 生成参数（尺寸只是默认值，可被玩家单独指定） */
+/**
+ * 难度刻度：分数 -> 生成参数（尺寸只是默认值，可被玩家单独指定）。
+ * 高难度档同时收紧“小颜色个数”和“最大色块占比”，贴近原版手感。
+ */
 const LADDER: LadderRow[] = [
   { score: 1, n: 5, small: 0.85, giant: 0.2, segments: 0.35, crosses: 0.2, compactness: 0.9, minTier: 0, minHard: 0 },
   { score: 2, n: 6, small: 0.8, giant: 0.25, segments: 0.33, crosses: 0.18, compactness: 0.85, minTier: 1, minHard: 0 },
-  { score: 3, n: 7, small: 0.72, giant: 0.3, segments: 0.3, crosses: 0.16, compactness: 0.78, minTier: 2, minHard: 0 },
-  { score: 4, n: 8, small: 0.64, giant: 0.4, segments: 0.28, crosses: 0.14, compactness: 0.7, minTier: 2, minHard: 1 },
-  { score: 5, n: 9, small: 0.56, giant: 0.5, segments: 0.26, crosses: 0.13, compactness: 0.62, minTier: 2, minHard: 1 },
-  { score: 6, n: 10, small: 0.5, giant: 0.55, segments: 0.18, crosses: 0.08, compactness: 0.5, minTier: 3, minHard: 2 },
-  { score: 7, n: 10, small: 0.46, giant: 0.62, segments: 0.06, crosses: 0.02, compactness: 0.42, minTier: 3, minHard: 3 },
-  { score: 8, n: 11, small: 0.42, giant: 0.68, segments: 0, crosses: 0, compactness: 0.34, minTier: 3, minHard: 4 },
-  { score: 9, n: 12, small: 0.38, giant: 0.72, segments: 0, crosses: 0, compactness: 0.28, minTier: 3, minHard: 5 },
-  { score: 10, n: 13, small: 0.36, giant: 0.78, segments: 0, crosses: 0, compactness: 0.22, minTier: 3, minHard: 5 },
+  { score: 3, n: 7, small: 0.7, giant: 0.3, segments: 0.3, crosses: 0.16, compactness: 0.78, minTier: 2, minHard: 1 },
+  { score: 4, n: 8, small: 0.6, giant: 0.38, segments: 0.28, crosses: 0.14, compactness: 0.7, minTier: 2, minHard: 2 },
+  { score: 5, n: 9, small: 0.5, giant: 0.45, segments: 0.24, crosses: 0.12, compactness: 0.6, minTier: 2, minHard: 5, maxTiny: 6 },
+  { score: 6, n: 10, small: 0.4, giant: 0.5, segments: 0.16, crosses: 0.08, compactness: 0.5, minTier: 3, minHard: 8, maxTiny: 4, maxGiant: 0.5 },
+  { score: 7, n: 10, small: 0.3, giant: 0.5, segments: 0.06, crosses: 0.03, compactness: 0.42, minTier: 3, minHard: 11, minRefuteish: 2, maxTiny: 3, maxGiant: 0.47 },
+  { score: 8, n: 11, small: 0.24, giant: 0.5, segments: 0, crosses: 0, compactness: 0.35, minTier: 4, minHard: 14, minRefuteish: 5, maxTiny: 3, maxGiant: 0.45 },
+  { score: 9, n: 12, small: 0.2, giant: 0.48, segments: 0, crosses: 0, compactness: 0.3, minTier: 4, minHard: 18, minRefuteish: 8, maxTiny: 3, maxGiant: 0.43 },
+  { score: 10, n: 13, small: 0.16, giant: 0.45, segments: 0, crosses: 0, compactness: 0.26, minTier: 4, minHard: 21, minRefuteish: 10, maxTiny: 3, maxGiant: 0.41 },
 ];
 
 export function profileForScore(score: number, sizeOverride?: number): GenerationProfile {
@@ -237,12 +253,15 @@ export function profileForScore(score: number, sizeOverride?: number): Generatio
   const lerp = (a: number, b: number) => a + (b - a) * t;
   const minTier = Math.round(lerp(lo.minTier, hi.minTier));
   const minHard = Math.round(lerp(lo.minHard, hi.minHard));
+  const minRefuteish = Math.round(lerp(lo.minRefuteish ?? 0, hi.minRefuteish ?? 0));
   const n = sizeOverride ?? Math.round(lerp(lo.n, hi.n));
   const giant = lerp(lo.giant, hi.giant);
-  // 实测：唯一解既依赖“小颜色”，也依赖“巨型色块”（两者都能提供强约束）。
-  // giant 越高，允许的小颜色越少 —— 这正是把最高难度做硬的关键。
-  const minSmall = clamp(0.42 + Math.max(0, n - 8) * 0.035 - 0.15 * giant, 0.32, 0.7);
+  // 起点仍然需要一定的小颜色/大小差异，否则唯一性修复很难找到唯一解；
+  // 真正的“难度提升”交给后面的难度爬山（refineDifficulty）来做。
+  const minSmall = clamp(0.34 + Math.max(0, n - 8) * 0.03 - 0.12 * giant, 0.16, 0.7);
   const small = Math.max(minSmall, lerp(lo.small, hi.small));
+  const maxTiny = Math.round(lerp(lo.maxTiny ?? 12, hi.maxTiny ?? 12));
+  const maxGiant = lerp(lo.maxGiant ?? 1, hi.maxGiant ?? 1);
   return {
     n,
     style: {
@@ -256,6 +275,9 @@ export function profileForScore(score: number, sizeOverride?: number): Generatio
       score: s,
       minTier: minTier > 0 ? minTier : undefined,
       minHardSteps: minHard > 0 ? minHard : undefined,
+      minRefuteishSteps: minRefuteish > 0 ? minRefuteish : undefined,
+      maxTinyColors: s >= 5 ? maxTiny : undefined,
+      maxGiantShare: s >= 5 ? Math.min(0.9, maxGiant) : undefined,
       // 高难度档不允许“悄悄降级”成简单关卡：给一个硬性最低分
       minScore: s >= 7 ? s - 0.8 : undefined,
       requireLogic: s < 9,

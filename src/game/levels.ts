@@ -1,4 +1,4 @@
-import { generatePuzzle, profileForScore, type Puzzle } from '../engine';
+import { generatePuzzle, profileForScore, type Puzzle, type PuzzleTarget } from '../engine';
 import { hashString } from '../engine/rng';
 import type { GameMode } from './storage';
 
@@ -108,9 +108,29 @@ export function buildPuzzle(spec: LevelSpec): Puzzle {
     n: profile.n,
     style: profile.style,
     seed: spec.seed >>> 0,
-    target: profile.target,
+    target: applyRefutationDice(profile.target, spec.difficulty, spec.seed),
     nodeLimit: 150_000,
   });
+}
+
+/**
+ * 最高难度档的“反证骰子”：完全由种子决定，所以同一关卡码结果稳定。
+ * 掷中时，这一关会被要求必须出现若干步“反证 / 试错”（第 4 层推理），
+ * 也就是必须靠“假设这里放牛会矛盾”才能继续推进，比纯组合推理更耗脑。
+ */
+export function applyRefutationDice(target: PuzzleTarget, difficulty: number, seed: number): PuzzleTarget {
+  if (difficulty < 8.5) return target;
+  const roll = ((hashString(`foxi-refute:v1:${seed >>> 0}`) >>> 0) % 1000) / 1000;
+  const chance = difficulty >= 9.4 ? 0.55 : difficulty >= 9 ? 0.35 : 0.2;
+  if (roll >= chance) return target;
+  const extraRefute = difficulty >= 9.4 ? 13 : difficulty >= 9 ? 11 : 9;
+  return {
+    ...target,
+    minTier: Math.max(target.minTier ?? 0, 4),
+    minRefuteishSteps: Math.max(target.minRefuteishSteps ?? 0, extraRefute),
+    // 反证关整体也再抬一点组合推理量
+    minHardSteps: Math.max(target.minHardSteps ?? 0, (target.minHardSteps ?? 0) + 3),
+  };
 }
 
 export const MODE_INFO: Record<GameMode, { name: string; desc: string; icon: string }> = {

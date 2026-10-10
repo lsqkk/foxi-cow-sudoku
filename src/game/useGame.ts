@@ -1,7 +1,11 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { hintForMarks, type Deduction, type Puzzle } from '../engine';
 
-export type Mark = 0 | 1 | 2; // 0 空, 1 排除×, 2 小牛
+/** 0 空 / 1 排除× / 2 小牛（放下即固定）/ 3 放错位置的红叉（固定） */
+export type Mark = 0 | 1 | 2 | 3;
+
+/** 固定的标记：小牛与红叉都不能再改 */
+export const isLockedMark = (m: Mark): boolean => m === 2 || m === 3;
 
 interface Change {
   cell: number;
@@ -29,7 +33,6 @@ export interface GameApi {
   undos: number;
   clears: number;
   finished: boolean;
-  wrongCells: number[];
   hint: HintState | null;
   hintLoading: boolean;
   paused: boolean;
@@ -43,9 +46,7 @@ export interface GameApi {
   paint: (cell: number, value: Mark) => void;
   endStroke: () => void;
   /** 单击/双击语义 */
-  tapX: (cell: number) => void;
   placeCow: (cell: number) => void;
-  removeCow: (cell: number) => void;
   undo: () => void;
   clearAll: () => void;
   requestHint: () => void;
@@ -76,6 +77,8 @@ export function useGame(
     timeLimitMs?: number;
     /** 挑战：最多允许的错误次数 */
     mistakeLimit?: number;
+    /** 放下小牛后是否自动排除同行/同列/同色/周围 8 格（默认开） */
+    autoExclude?: boolean;
     onFinish?: (report: GameReport) => void;
     onFail?: (reason: 'time' | 'mistakes', report: GameReport) => void;
   },
@@ -87,7 +90,6 @@ export function useGame(
   const [undos, setUndos] = useState(0);
   const [clears, setClears] = useState(0);
   const [finished, setFinished] = useState(false);
-  const [wrongCells, setWrongCells] = useState<number[]>([]);
   const [hint, setHint] = useState<HintState | null>(null);
   const [hintLoading, setHintLoading] = useState(false);
   const [paused, setPaused] = useState(false);
@@ -97,6 +99,7 @@ export function useGame(
 
   const history = useRef<Change[][]>([]);
   const pending = useRef<Change[]>([]);
+  const strokeActive = useRef(false);
   const startRef = useRef<number>(Date.now());
   const accumulated = useRef<number>(0);
   const pausedRef = useRef(false);
@@ -117,10 +120,10 @@ export function useGame(
     setUndos(0);
     setClears(0);
     setFinished(false);
-    setWrongCells([]);
     setHint(null);
     history.current = [];
     pending.current = [];
+    strokeActive.current = false;
     accumulated.current = 0;
     startRef.current = Date.now();
     startedRef.current = false;
@@ -207,29 +210,33 @@ export function useGame(
   }, []);
 
   const beginStroke = useCallback(() => {
+    strokeActive.current = true;
     pending.current = [];
   }, []);
 
   const paint = useCallback(
     (cell: number, value: Mark) => {
       const cur = marksRef.current[cell];
-      if (cur === value || finishedRef.current) return;
-      if (cur === 2 && value !== 0) return; // 不要用涂抹覆盖小牛
+      if (cur === value || finishedRef.current || failedRef.current) return;
+      if (isLockedMark(cur)) return; // 小牛 / 红叉已经固定，涂抹不会改动它们
+      if (value !== 0 && value !== 1) return; // 涂抹只负责打 × / 取消
       const change: Change = { cell, from: cur, to: value };
       ensureTimerRunning();
-      pending.current.push(change);
       marksRef.current = marksRef.current.slice();
       marksRef.current[cell] = value;
       applyChanges([change]);
+      if (strokeActive.current) pending.current.push(change);
+      else pushHistory([change]);
       setHint(null);
       if (value === 1) beep('x', opts.sound ?? false);
     },
-    [applyChanges, opts.sound, ensureTimerRunning],
+    [applyChanges, opts.sound, ensureTimerRunning, pushHistory],
   );
 
   const endStroke = useCallback(() => {
     const changes = pending.current;
     pending.current = [];
+    strokeActive.current = false;
     pushHistory(changes);
   }, [pushHistory]);
 
@@ -284,32 +291,50 @@ export function useGame(
   undosRef.current = undos;
   clearsRef.current = clears;
 
-  const tapX = useCallback(
-    (cell: number) => {
-      beginStroke();
-      paint(cell, marksRef.current[cell] === 1 ? 0 : 1);
-      endStroke();
+  /** 一次写入多个标记（放牛 + 自动排除），只记一次撤销 */
+  const commitChanges = useCallback(
+    (changes: Change[]) => {
+      if (changes.length === 0) return;
+      const next = marksRef.current.slice();
+      for (const ch of changes) next[ch.cell] = ch.to;
+      marksRef.current = next;
+      applyChanges(changes);
+      pushHistory(changes);
+      setHint(null);
     },
-    [beginStroke, paint, endStroke],
+    [applyChanges, pushHistory],
   );
 
-  const removeCow = useCallback(
-    (cell: number) => {
-      if (marksRef.current[cell] !== 2) return;
-      beginStroke();
-      paint(cell, 0);
-      endStroke();
+  /** 放牛后自动排除：同行、同列、同色区域、周围 8 格 */
+  const autoEliminate = useCallback(
+    (cell: number, next: Mark[], changes: Change[]) => {
+      const r0 = Math.floor(cell / n);
+      const c0 = cell % n;
+      const k = puzzle.colors[r0][c0];
+      for (let i = 0; i < next.length; i++) {
+        if (i === cell || next[i] !== 0) continue;
+        const r = Math.floor(i / n);
+        const c = i % n;
+        if (r === r0 || c === c0 || puzzle.colors[r][c] === k || (Math.abs(r - r0) <= 1 && Math.abs(c - c0) <= 1)) {
+          changes.push({ cell: i, from: 0, to: 1 });
+          next[i] = 1;
+        }
+      }
     },
-    [beginStroke, paint, endStroke],
+    [n, puzzle.colors],
   );
 
   const placeCow = useCallback(
     (cell: number) => {
-      if (finishedRef.current) return;
+      if (finishedRef.current || failedRef.current) return;
+      const cur = marksRef.current[cell];
+      if (isLockedMark(cur)) return; // 已经固定（牛 / 红叉）就不能再改
       const r = Math.floor(cell / n);
       const c = cell % n;
       const correct = puzzle.solution[r] === c;
-      if (!correct && opts.strictMistakes) {
+      ensureTimerRunning();
+
+      if (!correct) {
         setMistakes((m) => {
           const next = m + 1;
           if (opts.mistakeLimit !== undefined && next > opts.mistakeLimit && !failedRef.current) {
@@ -328,46 +353,23 @@ export function useGame(
           }
           return next;
         });
-        setWrongCells([cell]);
         beep('error', opts.sound ?? false);
-        window.setTimeout(() => setWrongCells([]), 700);
-        // 放错的牛会被自动拿掉（不扣血、不打断，只记一次错误）
-        if (marksRef.current[cell] !== 2) {
-          beginStroke();
-          paint(cell, 2);
-          endStroke();
-        }
-        window.setTimeout(() => {
-          beginStroke();
-          paint(cell, 0);
-          endStroke();
-        }, 650);
-        return;
-      }
-      if (!correct && !opts.strictMistakes) {
-        setMistakes((m) => {
-          const next = m + 1;
-          if (opts.mistakeLimit !== undefined && next > opts.mistakeLimit && !failedRef.current) {
-            failedRef.current = 'mistakes';
-            setFailed('mistakes');
-            setPaused(true);
-            opts.onFail?.('mistakes', {
-              timeMs: accumulated.current + (Date.now() - startRef.current),
-              mistakes: next,
-              hints: hintsUsedRef.current,
-              undos: undosRef.current,
-              clears: clearsRef.current,
-              finished: false,
-            });
+        if (opts.strictMistakes) {
+          // 放错 → 直接留下一个固定的红叉（相当于“这里确定不是牛”）
+          if (marksRef.current[cell] !== 3) {
+            commitChanges([{ cell, from: marksRef.current[cell], to: 3 }]);
           }
-          return next;
-        });
+          return;
+        }
+        // 非严格模式：错误的牛留在盘上（固定），照样自动排除，靠自己发现矛盾
       }
+
       beep('place', opts.sound ?? false);
-      beginStroke();
-      paint(cell, 2);
-      endStroke();
       const next = marksRef.current.slice();
+      const changes: Change[] = [{ cell, from: next[cell], to: 2 }];
+      next[cell] = 2;
+      if (opts.autoExclude !== false) autoEliminate(cell, next, changes);
+      commitChanges(changes);
       if (checkWin(next)) {
         window.setTimeout(() => {
           setHint(null);
@@ -375,7 +377,20 @@ export function useGame(
         }, 260);
       }
     },
-    [n, puzzle.solution, opts.strictMistakes, opts.sound, opts.mistakeLimit, opts.onFail, beginStroke, paint, endStroke, checkWin, finishNow],
+    [
+      n,
+      puzzle.solution,
+      opts.strictMistakes,
+      opts.autoExclude,
+      opts.sound,
+      opts.mistakeLimit,
+      opts.onFail,
+      ensureTimerRunning,
+      autoEliminate,
+      commitChanges,
+      checkWin,
+      finishNow,
+    ],
   );
 
   const undo = useCallback(() => {
@@ -417,7 +432,13 @@ export function useGame(
           });
           setHintsUsed((h) => h + 1);
         } else {
-          setHint({ deduction: null, conflict: false, cells: [], targets: [], text: '这一步没有可用的推理，先检查一下已有标记吧。' });
+          setHint({
+            deduction: null,
+            conflict: false,
+            cells: [],
+            targets: [],
+            text: '盘面已经推完了，剩下的牛都可以直接落下。',
+          });
         }
       } finally {
         setHintLoading(false);
@@ -428,9 +449,10 @@ export function useGame(
   const reset = useCallback(() => {
     setMarks(new Array(n * n).fill(0) as Mark[]);
     setFinished(false);
-    setWrongCells([]);
     setHint(null);
     history.current = [];
+    pending.current = [];
+    strokeActive.current = false;
     accumulated.current = 0;
     startRef.current = Date.now();
     startedRef.current = false;
@@ -454,7 +476,6 @@ export function useGame(
     undos,
     clears,
     finished,
-    wrongCells,
     hint,
     hintLoading,
     paused,
@@ -464,9 +485,7 @@ export function useGame(
     beginStroke,
     paint,
     endStroke,
-    tapX,
     placeCow,
-    removeCow,
     undo,
     clearAll,
     requestHint,

@@ -89,3 +89,31 @@ export async function copyLink(spec: LevelSpec): Promise<string> {
   }
   return url;
 }
+
+/**
+ * 粘贴导入：既接受“关卡码”（FOXI1-…），也接受分享链接 / 网址
+ * （例如 https://…/?m=classic&lv=30&code=FOXI1-9-a-1y4y1）。
+ */
+export function parseLevelInput(input: string): LevelSpec | null {
+  const text = input.trim();
+  if (!text) return null;
+
+  // 1) 看起来像网址 / 带查询参数的分享串
+  if (/^https?:\/\//i.test(text) || /[?&]?(code|m|day|lv)=/i.test(text) || text.startsWith('?')) {
+    let search = '';
+    try {
+      search = new URL(text).search;
+    } catch {
+      const q = text.indexOf('?');
+      search = q >= 0 ? text.slice(q) : text;
+      if (!search.startsWith('?')) search = `?${search}`;
+    }
+    const parsed = specFromUrl(search);
+    if (parsed) return parsed.spec;
+  }
+
+  // 2) 纯关卡码
+  const decoded = decodeLevelCode(text);
+  if (!decoded) return null;
+  return specForCustom(decoded.difficulty, decoded.size, decoded.seed);
+}

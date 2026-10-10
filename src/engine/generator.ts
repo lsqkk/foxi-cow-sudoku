@@ -10,6 +10,46 @@ import { difficultyLabel, extractFeatures, profileForScore, scorePuzzle } from '
 import { hashString, mulberry32 } from './rng';
 import { analyzePuzzle, countRefutations, countSolutions, runLadder } from './solver';
 import type { GenerateOptions, Puzzle, PuzzleMeta, PuzzleTarget, ShapeStyle } from './types';
+import type { SolveMetrics } from './types';
+
+/**
+ * 形状约束的软惩罚：小颜色太多、单个色块太大都会让关卡“看着难、其实简单”。
+ * 用分数单位表达，方便和平滑的难度分一起做爬山。
+ */
+function shapePenalty(features: PuzzleMeta['features'], target: PuzzleTarget | undefined): number {
+  let penalty = 0;
+  if (target?.maxTinyColors !== undefined) {
+    penalty += Math.max(0, features.tinyColors - target.maxTinyColors) * 2.2;
+  }
+  if (target?.maxGiantShare !== undefined) {
+    penalty += Math.max(0, features.giantShare - target.maxGiantShare) * 28;
+  }
+  return penalty;
+}
+
+/** 由颜色划分算出完整指标（设计难度 + 标签） */
+function metaFor(
+  n: number,
+  colors: number[][],
+  metrics: SolveMetrics,
+  opts: GenerateOptions,
+  attempt: number,
+  generateMs: number,
+): PuzzleMeta {
+  const features = extractFeatures(n, colors, metrics);
+  const score = scorePuzzle(features, metrics);
+  return {
+    seed: opts.seed,
+    style: opts.style,
+    attempts: attempt,
+    generateMs,
+    score,
+    label: difficultyLabel(score),
+    features,
+    metrics,
+    target: opts.target,
+  };
+}
 
 /** 该颜色是否“被限制在一行/一列内”（强线索） */
 function isLineConfined(n: number, colors: number[][], k: number): boolean {
@@ -216,12 +256,16 @@ function targetPenalty(meta: PuzzleMeta, target: PuzzleTarget | undefined): numb
   if (target.minHardSteps !== undefined && meta.metrics.hardSteps < target.minHardSteps) {
     penalty += 1.6 * (target.minHardSteps - meta.metrics.hardSteps);
   }
+  if (target.minRefuteishSteps !== undefined && meta.features.refuteishSteps < target.minRefuteishSteps) {
+    penalty += 1.4 * (target.minRefuteishSteps - meta.features.refuteishSteps);
+  }
   if (target.minRefutationSteps !== undefined && meta.metrics.refutationSteps < target.minRefutationSteps) {
     penalty += 3 * (target.minRefutationSteps - meta.metrics.refutationSteps);
   }
   if (target.minScore !== undefined && meta.score < target.minScore) {
     penalty += 2.5 * (target.minScore - meta.score);
   }
+  penalty += shapePenalty(meta.features, target);
   return penalty;
 }
 
@@ -230,10 +274,13 @@ function constraintsMet(meta: PuzzleMeta, target: PuzzleTarget | undefined): boo
   if (target.requireLogic && !meta.metrics.solvableByLogic) return false;
   if (target.requireRefutation && !meta.metrics.needsRefutation) return false;
   if (target.minHardSteps !== undefined && meta.metrics.hardSteps < target.minHardSteps) return false;
+  if (target.minRefuteishSteps !== undefined && meta.features.refuteishSteps < target.minRefuteishSteps) return false;
   if (target.minRefutationSteps !== undefined && meta.metrics.refutationSteps < target.minRefutationSteps) return false;
   if (target.minScore !== undefined && meta.score < target.minScore) return false;
   if (target.minTier !== undefined && meta.metrics.highestTier < target.minTier) return false;
   if (target.maxTier !== undefined && meta.metrics.highestTier > target.maxTier) return false;
+  if (target.maxTinyColors !== undefined && meta.features.tinyColors > target.maxTinyColors) return false;
+  if (target.maxGiantShare !== undefined && meta.features.giantShare > target.maxGiantShare) return false;
   return true;
 }
 
@@ -291,19 +338,7 @@ function attemptBatch(opts: GenerateOptions, attempts: number, bestSoFar: Attemp
       if (ref.refutationSteps < (opts.target.minRefutationSteps ?? 0)) continue;
     }
 
-    const features = extractFeatures(n, colors, metrics);
-    const score = scorePuzzle(features, metrics);
-    const meta: PuzzleMeta = {
-      seed: opts.seed,
-      style,
-      attempts: attempt,
-      generateMs: 0,
-      score,
-      label: difficultyLabel(score),
-      features,
-      metrics,
-      target: opts.target,
-    };
+    const meta: PuzzleMeta = metaFor(n, colors, metrics, opts, attempt, 0);
     const outcome: AttemptOutcome = {
       puzzle: { id: `${n}x${n}#${opts.seed.toString(36)}`, n, colors, solution, meta },
       penalty: targetPenalty(meta, opts.target),
@@ -313,6 +348,107 @@ function attemptBatch(opts: GenerateOptions, attempts: number, bestSoFar: Attemp
     if (outcome.ok && outcome.penalty <= 0.3) break;
   }
   return best;
+}
+
+/** 难度爬山迭代次数（固定值，保证同一 seed 可复现） */
+function climbSteps(n: number): number {
+  if (n <= 7) return 400;
+  if (n <= 9) return 900;
+  if (n <= 10) return 1100;
+  if (n <= 12) return 1100;
+  return 1000;
+}
+
+/**
+ * 难度爬山：在不破坏“唯一解”的前提下，反复把一个边界格子挪给相邻颜色，
+ * 让关卡更难（组合推理更多、候选更杂）同时满足形状约束（小颜色少、没有巨无霸色块）。
+ *
+ * 这一步是让高难度档“真的难”的关键 —— 单靠随机分区 + 唯一性修复，
+ * 出来的关卡几乎都能用一眼可见的推理搞定（实测组合推理步数 ≤3）。
+ */
+function refineDifficulty(base: AttemptOutcome, opts: GenerateOptions): AttemptOutcome {
+  const target = opts.target;
+  if (!target) return base;
+  // 低难度档保持“轻松、有白送线索”的手感，不做爬山
+  if (
+    (target.score ?? 0) < 4 &&
+    target.minHardSteps === undefined &&
+    target.maxTinyColors === undefined &&
+    target.maxGiantShare === undefined
+  ) {
+    return base;
+  }
+
+  const n = base.puzzle.n;
+  const solution = base.puzzle.solution;
+  const nodeLimit = Math.min(opts.nodeLimit ?? 60_000, 60_000);
+  const nbr4 = buildNeighbors4(n);
+  const total = n * n;
+  const rng = mulberry32((opts.seed ^ 0x85ebca6b) >>> 0);
+
+  // 只有“边上”的格子（有异色邻居）才可能被挪给别的颜色，随机取格子会浪费大量迭代
+  const boundaryCells = (cs: number[][]): number[] => {
+    const out: number[] = [];
+    for (let i = 0; i < total; i++) {
+      const k = cs[rowOf(n, i)][colOf(n, i)];
+      for (const j of nbr4[i]) {
+        if (cs[rowOf(n, j)][colOf(n, j)] !== k) {
+          out.push(i);
+          break;
+        }
+      }
+    }
+    return out;
+  };
+  let colors = base.puzzle.colors.map((row) => row.slice());
+  let boundaries = boundaryCells(colors);
+  let currentMeta = base.puzzle.meta;
+  let currentObj = -targetPenalty(currentMeta, target);
+  let best = base;
+  let bestObj = currentObj;
+  const startObj = currentObj;
+
+  const steps = climbSteps(n);
+  for (let iter = 0; iter < steps; iter++) {
+    // 退火：前期允许轻微变差（帮助跳出局部最优），后期只接受变好/持平
+    const tolerance = 1.6 * (1 - iter / steps);
+    if (boundaries.length === 0) break;
+    const cell = boundaries[Math.floor(rng() * boundaries.length)];
+    const r0 = rowOf(n, cell);
+    const c0 = colOf(n, cell);
+    const from = colors[r0][c0];
+    const options: number[] = [];
+    for (const j of nbr4[cell]) {
+      const k = colors[rowOf(n, j)][colOf(n, j)];
+      if (k !== from) options.push(k);
+    }
+    if (options.length === 0) continue;
+    const to = options[Math.floor(rng() * options.length)];
+
+    const trial = colors.map((row) => row.slice());
+    trial[r0][c0] = to;
+    if (!validateColorAssignmentConnected(n, trial, solution)) continue;
+    const metrics = analyzePuzzle({ n, colors: trial, solution }, { nodeLimit });
+    if (!metrics.unique) continue;
+    const meta = metaFor(n, trial, metrics, opts, base.puzzle.meta.attempts, 0);
+    const obj = -targetPenalty(meta, target);
+    if (obj >= currentObj - tolerance) {
+      colors = trial;
+      boundaries = boundaryCells(colors);
+      currentMeta = meta;
+      currentObj = obj;
+      if (obj > bestObj) {
+        bestObj = obj;
+        best = {
+          puzzle: { ...base.puzzle, colors, meta },
+          penalty: targetPenalty(meta, target),
+          ok: constraintsMet(meta, target),
+        };
+      }
+    }
+  }
+
+  return bestObj > startObj ? best : base;
 }
 
 /**
@@ -357,6 +493,20 @@ export function generatePuzzle(opts: GenerateOptions): Puzzle {
   }
 
   if (best) {
+    // 高难度档：在唯一解的基础上做难度爬山（可复现），把“看着难其实简单”变成“真的难”
+    best = refineDifficulty(best, opts);
+    const hardTarget = !!opts.target && ((opts.target.score ?? 0) >= 7 || opts.target.minRefuteishSteps !== undefined);
+    if (hardTarget && !constraintsMet(best.puzzle.meta, opts.target)) {
+      // 爬山后仍没达到硬性下限（组合推理步数 / 反证步数 / 最低分）：
+      // 换随机起点再爬，最多再试两批（只在极端情况下才会走到，用时间换质量）
+      for (const altSeed of [(opts.seed ^ 0x1b56c4e9) >>> 0, (opts.seed ^ 0x5bf03635) >>> 0]) {
+        if (constraintsMet(best.puzzle.meta, opts.target)) break;
+        const alt = attemptBatch({ ...opts, seed: altSeed }, attempts, null);
+        if (!alt) continue;
+        const refined = refineDifficulty(alt, opts);
+        if (refined.penalty < best.penalty) best = refined;
+      }
+    }
     best.puzzle.meta.generateMs = Date.now() - started;
     if (!best.puzzle.meta.metrics.unique) best.puzzle.meta.metrics.unproven = true;
     return best.puzzle;

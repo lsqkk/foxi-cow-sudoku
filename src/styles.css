@@ -298,6 +298,10 @@ button.primary:hover:not(:disabled) {
   animation: shake 0.4s ease;
   box-shadow: inset 0 0 0 3px var(--danger);
 }
+.cell.wrong .xmark line {
+  stroke: var(--danger);
+  stroke-width: 6;
+}
 @keyframes shake {
   0%,
   100% {
@@ -348,6 +352,16 @@ button.primary:hover:not(:disabled) {
   color: var(--muted);
   backdrop-filter: blur(2px);
   z-index: 2;
+}
+.boardmask.clickable {
+  cursor: pointer;
+}
+.boardmask.clickable span {
+  background: color-mix(in srgb, var(--card) 80%, transparent);
+  border-radius: 999px;
+  padding: 8px 16px;
+  box-shadow: var(--shadow);
+  color: var(--ink);
 }
 .winmask {
   background: color-mix(in srgb, var(--card) 94%, transparent);
@@ -1107,7 +1121,8 @@ button.big {
     flex: 0 0 auto;
   }
   .brand {
-    display: none;
+    font-size: 12px;
+    white-space: nowrap;
   }
   .hero {
     padding: 14px;
@@ -1138,15 +1153,31 @@ button.big {
     font-size: 16px;
   }
   .rulebar {
+    flex-direction: column;
+    gap: 8px;
     padding: 6px 8px;
     border-radius: 14px;
   }
   .rule {
-    justify-content: center;
-    gap: 0;
+    justify-content: flex-start;
+    gap: 10px;
+  }
+  .rule + .rule {
+    border-left: none;
+    border-top: 1px dashed #e2e5ec;
+    padding-left: 0;
+    padding-top: 8px;
   }
   .rule span {
-    display: none;
+    display: inline;
+  }
+  .ruleicon {
+    grid-template-columns: repeat(3, 14px);
+    grid-auto-rows: 14px;
+  }
+  .ruleicon b,
+  .ruleicon i {
+    font-size: 10px;
   }
   .boardwrap {
     padding: 7px;
@@ -1211,6 +1242,9 @@ button.big {
   }
   .footer {
     font-size: 11px;
+  }
+  .techlist {
+    grid-template-columns: 1fr;
   }
 }
 
@@ -1415,4 +1449,149 @@ code.mono {
   gap: 8px;
   justify-content: flex-end;
   margin-top: 14px;
+}
+
+/* ---------------- 对局常驻 / 继续对局 ---------------- */
+.tab.resume {
+  background: color-mix(in srgb, var(--primary) 14%, var(--card));
+  border-color: color-mix(in srgb, var(--primary) 45%, var(--line));
+  color: var(--primary-dark);
+  flex: 0 0 auto;
+}
+.resumecard {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  text-align: left;
+  padding: 12px 16px;
+  border-radius: 16px;
+  background: linear-gradient(135deg, color-mix(in srgb, var(--primary) 16%, var(--card)), var(--card));
+  border-color: color-mix(in srgb, var(--primary) 40%, var(--line));
+}
+.resumecard > svg:first-child {
+  color: var(--primary);
+}
+.resumecard span {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-width: 0;
+}
+.resumecard small {
+  color: var(--muted);
+  font-size: 12px;
+}
+.resumecard .mc-arrow {
+  color: var(--muted);
+}
+
+.hero-tip {
+  margin-top: 4px !important;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  flex-wrap: wrap;
+  color: var(--muted);
+  font-size: 12.5px;
+}
+.linkbtn {
+  display: inline;
+  padding: 0 2px;
+  border: none;
+  background: transparent;
+  color: var(--primary-dark);
+  font-weight: 600;
+  border-radius: 4px;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+.linkbtn:hover:not(:disabled) {
+  background: transparent;
+  color: var(--primary);
+}
+
+/* ---------------- 推理方法示意图 ---------------- */
+.techlist {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+  gap: 12px;
+  margin-top: 10px;
+}
+.techcard {
+  display: flex;
+  gap: 12px;
+  align-items: flex-start;
+  background: var(--surface-2);
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  padding: 12px;
+}
+.techtext {
+  min-width: 0;
+}
+.techtext b {
+  font-size: 14px;
+}
+.techtext p {
+  margin: 4px 0 0;
+  font-size: 13px;
+  line-height: 1.6;
+  color: #4b525e;
+}
+.diagram {
+  flex: 0 0 auto;
+  display: grid;
+  grid-template-columns: repeat(5, 18px);
+  grid-auto-rows: 18px;
+  gap: 2px;
+}
+.dcell {
+  position: relative;
+  border-radius: 4px;
+  display: grid;
+  place-items: center;
+  overflow: hidden;
+}
+.dc-none {
+  background: color-mix(in srgb, var(--muted) 16%, transparent);
+}
+.dc-0 {
+  background: #e8834a;
+}
+.dc-1 {
+  background: #6d9ed8;
+}
+.dc-2 {
+  background: #c64a79;
+}
+.dc-3 {
+  background: #8cc06a;
+}
+.d-reason {
+  box-shadow: inset 0 0 0 2px rgba(74, 127, 224, 0.95);
+}
+.d-cross {
+  background: color-mix(in srgb, var(--danger) 22%, var(--card));
+}
+.dx {
+  color: var(--danger);
+  font-weight: 800;
+  font-size: 13px;
+  line-height: 1;
+}
+.dcow {
+  font-size: 11px;
+  line-height: 1;
+}
+.aboutlink {
+  color: var(--primary-dark);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+.levelcell.current {
+  border-color: var(--primary);
+  background: color-mix(in srgb, var(--primary) 12%, var(--card));
 }

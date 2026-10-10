@@ -150,6 +150,19 @@ function label(i: number, n: number): string {
   return `(${rowOf(n, i) + 1},${colOf(n, i) + 1})`;
 }
 
+/**
+ * 提示高亮：把“原因格”扩成整块颜色。
+ * 玩家看到的提示框要和盘面上对应的颜色区域一致，不能只框住其中几个候选格。
+ */
+function withColors(s: SolverState, cells: number[], colors: number[]): number[] {
+  const set = new Set<number>(cells);
+  for (const k of colors) {
+    if (k < 0 || k >= s.n) continue;
+    for (const i of s.colorCells[k]) set.add(i);
+  }
+  return Array.from(set);
+}
+
 /** 基础传播：反复放置“唯一候选”，返回 false 表示出现矛盾 */
 export function propagateBasic(s: SolverState): boolean {
   for (;;) {
@@ -222,7 +235,7 @@ function colorSingle(s: SolverState): Deduction | null {
         technique: 'color-single',
         tier: 1,
         kind: 'place',
-        cells: [i],
+        cells: withColors(s, [i], [k]),
         targets: [i],
         text: `颜色#${k + 1} 只剩 ${label(i, s.n)} 一个候选格，这里必是小牛。`,
       };
@@ -247,7 +260,7 @@ function lineConfinedToColor(s: SolverState): Deduction | null {
         technique: 'line-confined-to-color',
         tier: 2,
         kind: 'eliminate',
-        cells,
+        cells: withColors(s, cells, [color]),
         targets,
         text: `${unitName(kind, k)} 剩下的候选全属于颜色#${color + 1}，这头牛占住该${
           kind === 'row' ? '行' : '列'
@@ -273,7 +286,7 @@ function colorConfinedToLine(s: SolverState): Deduction | null {
         technique: 'color-confined-to-line',
         tier: 2,
         kind: 'eliminate',
-        cells,
+        cells: withColors(s, cells, [k]),
         targets,
         text: `颜色#${k + 1} 只可能落在第 ${r + 1} 行，这头牛占住该行 → 第 ${r + 1} 行其它颜色的格子排除。`,
       };
@@ -286,7 +299,7 @@ function colorConfinedToLine(s: SolverState): Deduction | null {
         technique: 'color-confined-to-line',
         tier: 2,
         kind: 'eliminate',
-        cells,
+        cells: withColors(s, cells, [k]),
         targets,
         text: `颜色#${k + 1} 只可能落在第 ${c + 1} 列，这头牛占住该列 → 第 ${c + 1} 列其它颜色的格子排除。`,
       };
@@ -319,7 +332,9 @@ function lineIntersection(s: SolverState): Deduction | null {
         technique: 'line-intersection',
         tier: 2,
         kind: 'place',
-        cells: Array.from(new Set([...candidateCells(s, s.rowCells[r]), ...candidateCells(s, s.colCells[c])])),
+        cells: withColors(s, Array.from(new Set([...candidateCells(s, s.rowCells[r]), ...candidateCells(s, s.colCells[c])])), [
+          rowColor[r],
+        ]),
         targets: [i],
         text: `第 ${r + 1} 行与第 ${c + 1} 列的候选都属于颜色#${rowColor[r] + 1}，两者在该颜色的交会点 ${label(
           i,
@@ -433,7 +448,7 @@ function colorNeighborhood(s: SolverState): Deduction | null {
       technique: 'color-neighborhood',
       tier: TECHNIQUE_TIER['color-neighborhood'],
       kind: 'eliminate',
-      cells: cands,
+      cells: withColors(s, cands, [k]),
       targets,
       text: `颜色#${k + 1} 的候选只可能在 ${cands
         .map((i) => label(i, s.n))
@@ -462,7 +477,7 @@ function lookahead(s: SolverState): Deduction | null {
       technique,
       tier: TECHNIQUE_TIER[technique],
       kind: 'eliminate',
-      cells: [i],
+      cells: withColors(s, [i], wipedColor >= 0 ? [wipedColor] : []),
       targets: [i],
       text:
         wipedColor >= 0
@@ -497,8 +512,8 @@ function triples(xs: number[]): number[][] {
 /** 依次尝试一层到四层的技术，返回下一个可用推理 */
 function nextLadderStep(s: SolverState): Deduction | null {
   return (
-    nakedSingle(s) ??
     colorSingle(s) ??
+    nakedSingle(s) ??
     lineConfinedToColor(s) ??
     colorConfinedToLine(s) ??
     lineIntersection(s) ??
@@ -913,25 +928,38 @@ export function hintForMarks(
   marks: Uint8Array,
   opts: { refuteNodeLimit?: number; feasibilityNodeLimit?: number } = {},
 ): { deduction: Deduction | null; conflict: boolean } {
-  const s = createState(puzzle.n, puzzle.colors);
-  for (let i = 0; i < marks.length; i++) if (marks[i] === 1) eliminateInState(s, i);
+  const n = puzzle.n;
+  const solution = puzzle.solution;
+  const s = createState(n, puzzle.colors);
+  // 1 = 普通排除（×），3 = 放错后留下的红叉，两者都当“这里不是牛”
+  for (let i = 0; i < marks.length; i++) if (marks[i] === 1 || marks[i] === 3) eliminateInState(s, i);
   for (let i = 0; i < marks.length; i++) {
     if (marks[i] === 2) {
       if (!s.cand[i]) return { deduction: null, conflict: true };
+      // 放错位置的牛：唯一解关卡里，真解格以外的牛一定矛盾
+      if (solution && solution[rowOf(n, i)] !== colOf(n, i)) return { deduction: null, conflict: true };
       placeCowInState(s, i);
     }
   }
-  if (!propagateBasic(s)) return { deduction: null, conflict: true };
-  if (s.placed === s.n) return { deduction: null, conflict: false };
 
-  // 先判断玩家现有的标记是不是已经把局面带进死路（例如把真解格排除了）
-  if (feasibility(s, opts.feasibilityNodeLimit ?? 20_000) === 'unsat') {
-    return { deduction: null, conflict: true };
+  // 唯一解关卡里，冲突“恰好”等于：真解格被排除，或放了错位的牛。
+  // 这样判断又快又准，不会再出现“明明还能推理却说没有提示”。
+  if (solution) {
+    for (let r = 0; r < n; r++) {
+      const i = idx(n, r, solution[r]);
+      // 真解格被排除（且没有放牛）→ 一定矛盾
+      if (!s.cand[i] && !s.cow[i]) return { deduction: null, conflict: true };
+    }
   }
+  if (hasContradiction(s)) return { deduction: null, conflict: true };
+  if (s.placed >= s.n) return { deduction: null, conflict: false };
+
+  // 从最简单的一层开始找：先把一眼可见的“行列唯一候选 / 颜色唯一候选”给出来，
+  // 再逐步升级到包含关系、邻域覆盖、反证等高级技巧。
   const ladderStep = nextLadderStep(s);
   if (ladderStep) return { deduction: ladderStep, conflict: false };
   const refutation = refutationDeduction(s, opts.refuteNodeLimit ?? 20_000);
   if (refutation) return { deduction: refutation, conflict: false };
-  const fallback = solutionHint(s, puzzle.solution ?? null);
+  const fallback = solutionHint(s, solution ?? null);
   return { deduction: fallback, conflict: false };
 }

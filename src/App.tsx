@@ -5,7 +5,6 @@ import { generateAsync } from './game/generateAsync';
 import {
   MODE_INFO,
   TIME_ATTACK_LEVELS,
-  decodeLevelCode,
   specForClassic,
   specForCustom,
   specForDaily,
@@ -14,7 +13,7 @@ import {
   unlockChallenge,
   type LevelSpec,
 } from './game/levels';
-import { buildUrl, specFromUrl } from './game/urlState';
+import { buildUrl, parseLevelInput, specFromUrl } from './game/urlState';
 import { encodeLevelCode } from './game/levels';
 import {
   DEFAULT_META,
@@ -123,13 +122,7 @@ export default function App() {
     bootstrapped.current = true;
     const parsed = specFromUrl(window.location.search);
     if (!parsed) return;
-    const prog = loadProgress();
-    if (parsed.challenge && parsed.spec.level > prog.classicLevel) {
-      // 分享链接指向还没解锁的关卡：打开关卡列表并直接弹出解锁挑战
-      setPendingChallengeLevel(parsed.spec.level);
-      setScreen('levels');
-      return;
-    }
+    // 从分享链接进来：直接打开对应关卡，不再拦截“解锁挑战”
     loadSpec(parsed.spec);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
@@ -253,9 +246,21 @@ export default function App() {
     else loadSpec(specForCustom(spec.difficulty, spec.size, (Date.now() >>> 0) % 0xffffff));
   };
 
-  const playing = screen === 'play' && spec !== null && puzzle !== null;
+  const inGame = spec !== null && puzzle !== null;
+  /** 还没打完的一局（用于「继续对局」入口） */
+  const inProgress = inGame && lastReport === null;
+  const playing = screen === 'play' && inGame;
   const stars = lastReport ? starsFor(lastReport.mistakes, lastReport.hints) : 0;
   const isRecord = !!(lastReport && record?.cleared && lastReport.timeMs < record.timeMs);
+
+  // 打完一局后离开对局页 = 这局结束了，不用再挂着「继续对局」
+  useEffect(() => {
+    if (screen !== 'play' && lastReport) {
+      setSpec(null);
+      setPuzzle(null);
+      setLastReport(null);
+    }
+  }, [screen, lastReport]);
 
   return (
     <div className="app">
@@ -276,8 +281,13 @@ export default function App() {
           <Icon name="gear" /> 设置
         </button>
         <button className={screen === 'rules' ? 'tab active' : 'tab'} onClick={() => setScreen('rules')}>
-          <Icon name="info" /> 规则
+          <Icon name="info" /> 规则玩法
         </button>
+        {inProgress && !playing && (
+          <button className="tab resume" onClick={() => setScreen('play')}>
+            <Icon name="play" /> 继续对局
+          </button>
+        )}
         <span className="brand">佛系消消消 · 纯净版</span>
       </nav>
 
@@ -292,11 +302,15 @@ export default function App() {
           onRecords={() => setScreen('records')}
           onSettings={() => setScreen('settings')}
           onRules={() => setScreen('rules')}
+          inGame={inProgress}
+          onResume={() => setScreen('play')}
         />
       )}
 
-      {playing && (
+      {inGame && (
+        <div className="playscreen" style={{ display: screen === 'play' ? undefined : 'none' }}>
         <GameScreen
+          active={screen === 'play'}
           key={`${spec!.mode}:${spec!.level}:${spec!.seed}:${challenge ? 'c' : 'n'}`}
           spec={spec!}
           puzzle={puzzle!}
@@ -331,6 +345,9 @@ export default function App() {
               setSplits([]);
               setTaTotalMs(0);
             }
+            // 退出即结束本局（否则“继续对局”会一直挂着）
+            setSpec(null);
+            setPuzzle(null);
             setScreen(challenge ? 'levels' : 'home');
           }}
           onSettings={(patch) => setSettings((s) => ({ ...s, ...patch }))}
@@ -339,15 +356,18 @@ export default function App() {
             loadSpec(specForZen(difficulty, size, Date.now()));
           }}
           onImportCode={(code) => {
-            const decoded = decodeLevelCode(code);
-            if (!decoded) {
-              alert('关卡码无法识别，检查一下是不是复制完整了');
+            const parsed = parseLevelInput(code);
+            if (!parsed) {
+              alert('认不出这个关卡码 / 链接，检查一下是不是复制完整了');
               return;
             }
-            setProgress((p) => ({ ...p, customDifficulty: decoded.difficulty, customSize: decoded.size }));
-            loadSpec(specForCustom(decoded.difficulty, decoded.size, decoded.seed));
+            if (parsed.mode === 'custom' || parsed.mode === 'zen') {
+              setProgress((p) => ({ ...p, customDifficulty: parsed.difficulty, customSize: parsed.size }));
+            }
+            loadSpec(parsed);
           }}
         />
+        </div>
       )}
 
       {screen === 'modes' && (
@@ -495,6 +515,8 @@ export default function App() {
  * 这样首页/面板不会带着计时和棋盘状态。
  */
 function GameScreen(props: {
+  /** 是否正停留在对局页（切到规则/首页时置 false，会自动暂停计时） */
+  active: boolean;
   spec: LevelSpec;
   puzzle: Puzzle;
   settings: Settings;
@@ -517,6 +539,7 @@ function GameScreen(props: {
   const api = useGame(props.puzzle, {
     strictMistakes: props.settings.strictMistakes,
     sound: props.settings.sound,
+    autoExclude: props.settings.autoExclude,
     timeLimitMs: props.challenge?.timeLimitMs,
     mistakeLimit: props.challenge?.mistakeLimit,
     onFinish: props.onFinish,
@@ -533,6 +556,11 @@ function GameScreen(props: {
       };
     }
   });
+
+  // 离开对局页（例如去看规则）时自动暂停，回来点“继续”即可接着玩
+  useEffect(() => {
+    if (!props.active) api.setPaused(true);
+  }, [props.active, api.setPaused]);
 
   return (
     <PlayView
